@@ -1,6 +1,6 @@
 import { io } from "socket.io-client";
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || window.location.origin;
+const SOCKET_URL = window.location.origin;
 
 let socket = null;
 
@@ -11,6 +11,7 @@ export function getSocket() {
 
     console.log("[Socket] creating client", { url: SOCKET_URL });
     socket = io(SOCKET_URL, {
+      path: "/socket.io",
       transports: ["websocket", "polling"],
       autoConnect: false,
       reconnection: true,
