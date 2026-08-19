@@ -48,22 +48,32 @@ const mediaCodecs = [
   },
 ];
 
+// function getListenIps() {
+//   try {
+//     const announcedIp =
+//       process.env.MEDIASOUP_ANNOUNCED_IP || process.env.PUBLIC_IP || "59.96.57.40";
+//     return [
+//       { ip: "127.0.0.1" },
+//       { ip: "192.168.1.55", announcedIp: "192.168.1.55" },
+//       { ip: "0.0.0.0", announcedIp },
+//     ];
+//   } catch (err) {
+//     console.error("[Config:mediasoup] getListenIps failed", err);
+//     return [
+//       { ip: "0.0.0.0", announcedIp: "59.96.57.40" },
+//     ];
+//   }
+// }
+
 function getListenIps() {
   try {
-    const announcedIp =
-      process.env.MEDIASOUP_ANNOUNCED_IP || process.env.PUBLIC_IP || "59.96.57.40";
-    return [
-      { ip: "127.0.0.1" },
-      { ip: "192.168.1.55", announcedIp: "192.168.1.55" },
-      { ip: "0.0.0.0", announcedIp },
-    ];
+    return [{ ip: "0.0.0.0", announcedIp: "192.168.1.55" }];
   } catch (err) {
     console.error("[Config:mediasoup] getListenIps failed", err);
-    return [
-      { ip: "0.0.0.0", announcedIp: "59.96.57.40" },
-    ];
+    return [{ ip: "0.0.0.0", announcedIp: "192.168.1.55" }];
   }
 }
+
 
 module.exports = {
   workerSettings: {
