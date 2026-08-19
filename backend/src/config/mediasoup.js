@@ -50,13 +50,18 @@ const mediaCodecs = [
 
 function getListenIps() {
   try {
-    const listenIp = process.env.MEDIASOUP_LISTEN_IP || "0.0.0.0";
     const announcedIp =
-      process.env.MEDIASOUP_ANNOUNCED_IP || process.env.PUBLIC_IP || "127.0.0.1";
-    return [{ ip: listenIp, announcedIp }];
+      process.env.MEDIASOUP_ANNOUNCED_IP || process.env.PUBLIC_IP || "59.96.57.40";
+    return [
+      { ip: "127.0.0.1" },
+      { ip: "192.168.1.55", announcedIp: "192.168.1.55" },
+      { ip: "0.0.0.0", announcedIp },
+    ];
   } catch (err) {
     console.error("[Config:mediasoup] getListenIps failed", err);
-    return [{ ip: "0.0.0.0", announcedIp: "127.0.0.1" }];
+    return [
+      { ip: "0.0.0.0", announcedIp: "59.96.57.40" },
+    ];
   }
 }
 
