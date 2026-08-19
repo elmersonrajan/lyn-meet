@@ -39,12 +39,20 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     (async () => {
       try {
         console.log("[MeetingRoom] initializing mediasoup");
-        await media.initDevice({
-          routerRtpCapabilities: joinPayload.routerRtpCapabilities,
-          iceServers: joinPayload.iceServers,
+          await media.initDevice({
+            routerRtpCapabilities: joinPayload.routerRtpCapabilities,
+            iceServers: joinPayload.iceServers,
+            peerId: joinPayload.peer?.id,
         });
-        if (!cancelled) {
-          await media.consumeExisting(joinPayload.producers || []);
+        if (cancelled) return;
+        await media.consumeExisting(joinPayload.producers || []);
+        try {
+          const again = await emitAck("get-producers", {});
+          if (!cancelled) {
+            await media.consumeExisting(again.producers || []);
+          }
+        } catch (err) {
+          console.error("[MeetingRoom] get-producers retry failed", err);
         }
       } catch (err) {
         console.error("[MeetingRoom] media init failed", err);
@@ -260,6 +268,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         <aside className="side">
           <InstructorVideo
             stream={isTeacher ? media.localStream : media.teacherStream}
+            playAudio={!isTeacher}
             name={teacherName}
             disconnected={teacherDisconnected}
           />
