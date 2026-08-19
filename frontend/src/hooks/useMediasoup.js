@@ -7,7 +7,12 @@ export function useMediasoup({ socket, role, enabled }) {
   const sendTransportRef = useRef(null);
   const recvTransportRef = useRef(null);
   const producersRef = useRef({});
-  const consumersRef = useRef(new Map());
+  const consumedRef = useRef(new Set());
+  const startingRef = useRef(false);
+  const myPeerIdRef = useRef(null);
+
+  const teacherMsRef = useRef(new MediaStream());
+  const screenMsRef = useRef(new MediaStream());
 
   const [localStream, setLocalStream] = useState(null);
   const [teacherStream, setTeacherStream] = useState(null);
@@ -17,49 +22,68 @@ export function useMediasoup({ socket, role, enabled }) {
   const [sharing, setSharing] = useState(false);
   const [ready, setReady] = useState(false);
 
-  const teacherStreamRef = useRef(new MediaStream());
-  const screenStreamRef = useRef(new MediaStream());
+  const pendingRef = useRef([]);
+
+  const bumpTeacher = () => {
+    setTeacherStream(new MediaStream(teacherMsRef.current.getTracks()));
+  };
+  const bumpScreen = () => {
+    setScreenStream(new MediaStream(screenMsRef.current.getTracks()));
+  };
 
   const attachRemoteTrack = useCallback((track, source) => {
     try {
-      console.log("[Mediasoup] attachRemoteTrack", source, track.kind);
+      console.log("[Mediasoup] attachRemoteTrack", source, track.kind, track.id, track.readyState);
       if (source === "screen") {
-        screenStreamRef.current.addTrack(track);
-        setScreenStream(new MediaStream(screenStreamRef.current.getTracks()));
+        screenMsRef.current.getTracks().forEach((t) => {
+          if (t.kind === track.kind) screenMsRef.current.removeTrack(t);
+        });
+        screenMsRef.current.addTrack(track);
+        bumpScreen();
       } else {
-        teacherStreamRef.current.addTrack(track);
-        setTeacherStream(new MediaStream(teacherStreamRef.current.getTracks()));
+        teacherMsRef.current.getTracks().forEach((t) => {
+          if (t.kind === track.kind) teacherMsRef.current.removeTrack(t);
+        });
+        teacherMsRef.current.addTrack(track);
+        bumpTeacher();
       }
     } catch (err) {
       console.error("[Mediasoup] attachRemoteTrack failed", err);
     }
   }, []);
 
-  const consumeProducer = useCallback(
+    const consumeProducer = useCallback(
     async (producer) => {
       try {
-        if (!deviceRef.current || !recvTransportRef.current) return;
-        if (producer.role !== "teacher" && producer.source !== "audio") {
-          console.log("[Mediasoup] skip non-teacher video/screen", producer);
+        if (!deviceRef.current || !recvTransportRef.current) {
+          pendingRef.current.push(producer);
+          console.log("[Mediasoup] queued consume", producer);
           return;
         }
+        if (myPeerIdRef.current && producer.peerId === myPeerIdRef.current) {
+          console.log("[Mediasoup] skip own producer", producer);
+          return;
+        }
+        if (consumedRef.current.has(producer.producerId)) return;
+        if (producer.role && producer.role !== "teacher" && producer.source === "video") return;
+
+        consumedRef.current.add(producer.producerId);
         console.log("[Mediasoup] consumeProducer", producer);
         const res = await emitAck("consume", {
           producerId: producer.producerId,
           transportId: recvTransportRef.current.id,
           rtpCapabilities: deviceRef.current.rtpCapabilities,
         });
-        const { params } = res;
         const consumer = await recvTransportRef.current.consume({
-          id: params.id,
-          producerId: params.producerId,
-          kind: params.kind,
-          rtpParameters: params.rtpParameters,
+          id: res.params.id,
+          producerId: res.params.producerId,
+          kind: res.params.kind,
+          rtpParameters: res.params.rtpParameters,
         });
-        consumersRef.current.set(consumer.id, consumer);
-        attachRemoteTrack(consumer.track, producer.source);
+        attachRemoteTrack(consumer.track, producer.source || res.params.kind);
         await emitAck("resume-consumer", { consumerId: consumer.id });
       } catch (err) {
+        consumedRef.current.delete(producer.producerId);
         console.error("[Mediasoup] consumeProducer failed", err);
       }
     },
@@ -68,31 +92,36 @@ export function useMediasoup({ socket, role, enabled }) {
 
   const startLocalMedia = useCallback(async () => {
     try {
+      const md = navigator.mediaDevices;
+      if (!md || !md.getUserMedia) {
+        throw new Error("Camera needs HTTPS. Open https://59.96.57.40:5173/");
+      }
       const constraints =
         role === "teacher"
           ? { audio: true, video: { width: 1280, height: 720 } }
           : { audio: true, video: false };
       console.log("[Mediasoup] getUserMedia", constraints);
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const stream = await md.getUserMedia(constraints);
       setLocalStream(stream);
-      if (role === "teacher") setTeacherStream(stream);
+      if (role === "teacher") {
+        stream.getTracks().forEach((t) => teacherMsRef.current.addTrack(t));
+        bumpTeacher();
+      }
 
       const audioTrack = stream.getAudioTracks()[0];
-      if (audioTrack && sendTransportRef.current) {
-        const producer = await sendTransportRef.current.produce({
+      if (audioTrack && sendTransportRef.current && !producersRef.current.audio) {
+        producersRef.current.audio = await sendTransportRef.current.produce({
           track: audioTrack,
           appData: { source: "audio" },
         });
-        producersRef.current.audio = producer;
       }
 
       const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack && role === "teacher" && sendTransportRef.current) {
-        const producer = await sendTransportRef.current.produce({
+      if (videoTrack && role === "teacher" && sendTransportRef.current && !producersRef.current.video) {
+        producersRef.current.video = await sendTransportRef.current.produce({
           track: videoTrack,
           appData: { source: "video" },
         });
-        producersRef.current.video = producer;
         setCamOn(true);
       }
     } catch (err) {
@@ -102,8 +131,14 @@ export function useMediasoup({ socket, role, enabled }) {
   }, [role]);
 
   const initDevice = useCallback(
-    async ({ routerRtpCapabilities, iceServers }) => {
+    async ({ routerRtpCapabilities, iceServers, peerId }) => {
       try {
+        if (startingRef.current || deviceRef.current) {
+          console.log("[Mediasoup] initDevice already running/done");
+          return;
+        }
+        startingRef.current = true;
+        if (peerId) myPeerIdRef.current = peerId;
         console.log("[Mediasoup] initDevice");
         const device = new mediasoupClient.Device();
         await device.load({ routerRtpCapabilities });
@@ -159,7 +194,11 @@ export function useMediasoup({ socket, role, enabled }) {
         recvTransportRef.current = await makeTransport("recv");
         setReady(true);
         await startLocalMedia();
+        for (const p of pendingRef.current.splice(0)) {
+          await consumeProducer(p);
+        }
       } catch (err) {
+        startingRef.current = false;
         console.error("[Mediasoup] initDevice failed", err);
         throw err;
       }
@@ -176,8 +215,9 @@ export function useMediasoup({ socket, role, enabled }) {
     };
     const onClosed = ({ producerId, source }) => {
       console.log("[Mediasoup] producer-closed", producerId, source);
+      consumedRef.current.delete(producerId);
       if (source === "screen") {
-        screenStreamRef.current = new MediaStream();
+        screenMsRef.current = new MediaStream();
         setScreenStream(null);
         setSharing(false);
       }
@@ -187,7 +227,6 @@ export function useMediasoup({ socket, role, enabled }) {
     socket.on("producer-closed", onClosed);
     socket.on("force-mute", async () => {
       try {
-        console.log("[Mediasoup] force-mute received");
         await emitAck("pause-producer", { source: "audio" });
         localStream?.getAudioTracks().forEach((t) => {
           t.enabled = false;
@@ -222,7 +261,6 @@ export function useMediasoup({ socket, role, enabled }) {
   const toggleMic = useCallback(async () => {
     try {
       const next = !micOn;
-      console.log("[Mediasoup] toggleMic", next);
       localStream?.getAudioTracks().forEach((t) => {
         t.enabled = next;
       });
@@ -235,12 +273,8 @@ export function useMediasoup({ socket, role, enabled }) {
 
   const toggleCam = useCallback(async () => {
     try {
-      if (role !== "teacher") {
-        console.warn("[Mediasoup] students cannot toggle camera");
-        return;
-      }
+      if (role !== "teacher") return;
       const next = !camOn;
-      console.log("[Mediasoup] toggleCam", next);
       localStream?.getVideoTracks().forEach((t) => {
         t.enabled = next;
       });
@@ -254,11 +288,7 @@ export function useMediasoup({ socket, role, enabled }) {
   const startScreen = useCallback(async () => {
     try {
       if (role !== "teacher") throw new Error("Only teacher can share screen");
-      console.log("[Mediasoup] startScreen");
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: false,
-      });
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
       const track = stream.getVideoTracks()[0];
       const producer = await sendTransportRef.current.produce({
         track,
@@ -285,7 +315,6 @@ export function useMediasoup({ socket, role, enabled }) {
 
   const stopScreen = useCallback(async () => {
     try {
-      console.log("[Mediasoup] stopScreen");
       await emitAck("close-producer", { source: "screen" });
       producersRef.current.screen?.close();
       screenStream?.getTracks().forEach((t) => t.stop());
@@ -298,7 +327,6 @@ export function useMediasoup({ socket, role, enabled }) {
 
   const cleanup = useCallback(() => {
     try {
-      console.log("[Mediasoup] cleanup");
       localStream?.getTracks().forEach((t) => t.stop());
       screenStream?.getTracks().forEach((t) => t.stop());
       Object.values(producersRef.current).forEach((p) => {
