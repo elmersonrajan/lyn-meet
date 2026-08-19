@@ -205,14 +205,24 @@ function attachSocketHandlers(io) {
       }
     });
 
-    socket.on("get-producers", (callback) => {
+        socket.on("get-producers", (payload, callback) => {
       try {
+        if (typeof payload === "function") {
+          callback = payload;
+          payload = {};
+        }
+        if (typeof callback !== "function") {
+          log.warn("get-producers without callback");
+          return;
+        }
         const room = getRoom(socket.data.roomId);
         if (!room) throw new Error("Not in a room");
         callback({ ok: true, producers: room.listProducers() });
       } catch (err) {
         log.error("get-producers failed", err);
-        callback({ ok: false, error: err.message });
+        if (typeof callback === "function") {
+          callback({ ok: false, error: err.message });
+        }
       }
     });
 
