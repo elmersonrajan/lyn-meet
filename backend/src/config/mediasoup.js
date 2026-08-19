@@ -67,10 +67,10 @@ const mediaCodecs = [
 
 function getListenIps() {
   try {
-    return [{ ip: "0.0.0.0", announcedIp: "192.168.1.55" }];
+    return [{ ip: "0.0.0.0", announcedIp: "59.96.57.40" }];
   } catch (err) {
     console.error("[Config:mediasoup] getListenIps failed", err);
-    return [{ ip: "0.0.0.0", announcedIp: "192.168.1.55" }];
+    return [{ ip: "0.0.0.0", announcedIp: "59.96.57.40" }];
   }
 }
 
