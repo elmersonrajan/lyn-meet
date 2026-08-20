@@ -298,7 +298,7 @@ class CloudRecorder {
     }
   }
 
-
+  async stop() {
     try {
       log.action("stop", { recorderId: this.id, roomId: this.room.id });
       appendMeetingLog("recording stop", { recorderId: this.id });
