@@ -3,6 +3,7 @@ import { useUser } from "../context/UserContext.jsx";
 import { emitAck } from "../services/socket.js";
 import { useMediasoup } from "../hooks/useMediasoup.js";
 import { useWhiteboard } from "../hooks/useWhiteboard.js";
+import { useLocalRecorder } from "../hooks/useLocalRecorder.js";
 import InstructorVideo from "./InstructorVideo.jsx";
 import Participants from "./Participants.jsx";
 import Toolbar from "./Toolbar.jsx";
@@ -34,6 +35,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     initial: joinPayload.whiteboard || [],
   });
 
+  const localRec = useLocalRecorder();
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -60,7 +63,6 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     return () => {
       cancelled = true;
     };
-    // init once per join
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -86,11 +88,11 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     const onChat = (msg) => setMessages((prev) => [...prev, msg]);
     const onRecStart = () => {
       setRecording(true);
-      show("Cloud recording started");
+      show("Recording started (cam / screen / whiteboard)");
     };
     const onRecStop = () => {
       setRecording(false);
-      show("Cloud recording saved on server");
+      show("Recording saved on server");
     };
     const onTeacherDown = (payload) => {
       setTeacherDisconnected(true);
@@ -147,13 +149,69 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     }
   };
 
+  const uploadBlob = async (blob) => {
+    try {
+      if (!blob) {
+        console.warn("[MeetingRoom] no blob — logs only");
+        await fetch("/api/recordings/upload", {
+          method: "POST",
+          headers: { "X-Meeting-Id": session.meetingId || "1" },
+          body: new Uint8Array(),
+        });
+        return;
+      }
+      console.log("[MeetingRoom] uploading recording", { bytes: blob.size, type: blob.type });
+      const res = await fetch("/api/recordings/upload", {
+        method: "POST",
+        headers: {
+          "Content-Type": blob.type || "video/webm",
+          "X-Meeting-Id": session.meetingId || "1",
+        },
+        body: blob,
+      });
+      const json = await res.json();
+      console.log("[MeetingRoom] upload ack", json);
+      if (!json.ok) throw new Error(json.error || "upload failed");
+    } catch (err) {
+      console.error("[MeetingRoom] upload failed", err);
+      throw err;
+    }
+  };
+
   const onToggleRecord = async () => {
     try {
       if (!isTeacher) return;
       if (recording) {
-        await emitAck("stop-recording", {});
+        console.log("[MeetingRoom] stop recording");
+        const blob = await localRec.stop();
+        try {
+          await emitAck("stop-recording", {});
+        } catch (err) {
+          console.error("[MeetingRoom] stop-recording socket failed", err);
+        }
+        await uploadBlob(blob);
+        setRecording(false);
+        setToast(blob ? "Recording uploaded (.mp4 on server)" : "No A/V — log file only");
       } else {
-        await emitAck("start-recording", {});
+        console.log("[MeetingRoom] start recording");
+        const info = await localRec.start({
+          localStream: media.localStream,
+          screenStream: media.screenStream,
+          canvas: board.canvasRef?.current,
+          micOn: media.micOn,
+        });
+        console.log("[MeetingRoom] local rec mode", info);
+        try {
+          await emitAck("start-recording", {});
+        } catch (err) {
+          console.error("[MeetingRoom] start-recording socket failed", err);
+        }
+        setRecording(true);
+        if (info?.mode === "logs-only") {
+          setToast("No cam/mic/screen — whiteboard + logs only");
+        } else {
+          setToast("Recording (camera / screen / whiteboard)");
+        }
       }
     } catch (err) {
       console.error("[MeetingRoom] record toggle failed", err);
@@ -213,7 +271,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     <div className="room">
       <div className="room-frame">
         <div className="stage-wrap">
-          {recording ? <div className="rec-pill">REC CLOUD → .mp4</div> : null}
+          {recording ? <div className="rec-pill">REC → server .mp4</div> : null}
           <div className="ice-strip">
             ICE send: {media.iceState?.send || "new"} | recv: {media.iceState?.recv || "new"}
           </div>
