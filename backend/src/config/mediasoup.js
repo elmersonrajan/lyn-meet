@@ -11,6 +11,10 @@ function numWorkers() {
   }
 }
 
+const announcedIp =
+  process.env.MEDIASOUP_ANNOUNCED_IP || process.env.PUBLIC_IP || "59.96.57.40";
+const listenIp = process.env.MEDIASOUP_LISTEN_IP || "0.0.0.0";
+
 const mediaCodecs = [
   {
     kind: "audio",
@@ -22,60 +26,33 @@ const mediaCodecs = [
     kind: "video",
     mimeType: "video/VP8",
     clockRate: 90000,
-    parameters: {
-      "x-google-start-bitrate": 1000,
-    },
+    parameters: { "x-google-start-bitrate": 800 },
   },
   {
     kind: "video",
-    mimeType: "video/VP9",
-    clockRate: 90000,
-    parameters: {
-      "profile-id": 2,
-      "x-google-start-bitrate": 1000,
-    },
-  },
-  {
-    kind: "video",
-    mimeType: "video/h264",
+    mimeType: "video/H264",
     clockRate: 90000,
     parameters: {
       "packetization-mode": 1,
       "profile-level-id": "42e01f",
       "level-asymmetry-allowed": 1,
-      "x-google-start-bitrate": 1000,
+      "x-google-start-bitrate": 800,
     },
   },
 ];
 
-// function getListenIps() {
-//   try {
-//     const announcedIp =
-//       process.env.MEDIASOUP_ANNOUNCED_IP || process.env.PUBLIC_IP || "59.96.57.40";
-//     return [
-//       { ip: "127.0.0.1" },
-//       { ip: "192.168.1.55", announcedIp: "192.168.1.55" },
-//       { ip: "0.0.0.0", announcedIp },
-//     ];
-//   } catch (err) {
-//     console.error("[Config:mediasoup] getListenIps failed", err);
-//     return [
-//       { ip: "0.0.0.0", announcedIp: "59.96.57.40" },
-//     ];
-//   }
-// }
-
 function getListenIps() {
   try {
-    return [{ ip: "0.0.0.0", announcedIp: "59.96.57.40" }];
+    console.log("[Config:mediasoup] listenIps", { ip: listenIp, announcedIp });
+    return [{ ip: listenIp, announcedIp }];
   } catch (err) {
     console.error("[Config:mediasoup] getListenIps failed", err);
     return [{ ip: "0.0.0.0", announcedIp: "59.96.57.40" }];
   }
 }
 
-
 module.exports = {
+  announcedIp,
   workerSettings: {
     logLevel: "warn",
     logTags: ["info", "ice", "dtls", "rtp", "srtp", "rtcp"],
@@ -88,8 +65,8 @@ module.exports = {
     enableUdp: true,
     enableTcp: true,
     preferUdp: true,
-    initialAvailableOutgoingBitrate: 1_000_000,
-    maxIncomingBitrate: 3_000_000,
+    initialAvailableOutgoingBitrate: 600_000,
+    maxIncomingBitrate: 2_500_000,
   },
   numWorkers: numWorkers(),
 };

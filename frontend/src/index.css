@@ -320,3 +320,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   .side { border-left: 0; border-top: 2px solid var(--line); max-height: 280px; }
   .stage-tools { position: static; flex-wrap: wrap; }
 }
+
+.ice-strip {
+  position: absolute;
+  right: 12px;
+  top: 10px;
+  font-size: 11px;
+  background: #0f2a4d;
+  color: #d7e6ff;
+  padding: 4px 8px;
+  border-radius: 6px;
+  z-index: 3;
+  font-family: ui-monospace, monospace;
+}

@@ -89,17 +89,50 @@ class Room {
 
       transport.on("dtlsstatechange", (state) => {
         log.info("dtlsstatechange", { transportId: transport.id, state, peerId: peer.id });
-        if (state === "closed" || state === "failed") {
-          transport.close();
+      });
+      transport.on("icestatechange", (state) => {
+        log.info("icestatechange", {
+          transportId: transport.id,
+          state,
+          peerId: peer.id,
+          role: peer.role,
+        });
+        if (state === "connected") {
+          log.info("ICE CONNECTED — media path is open", {
+            peerId: peer.id,
+            role: peer.role,
+            transportId: transport.id,
+          });
+        }
+        if (state === "failed" || state === "disconnected") {
+          log.error("ICE FAILED on server — UDP/TCP 40000-49000 not reaching this host 1:1", {
+            peerId: peer.id,
+            role: peer.role,
+            transportId: transport.id,
+            state,
+            candidates: transport.iceCandidates,
+          });
         }
       });
+      transport.on("iceselectedtuplechange", (tuple) => {
+        log.info("ICE selected tuple (WORKING PATH)", {
+          peerId: peer.id,
+          transportId: transport.id,
+          tuple,
+        });
+      });
 
-      return {
+      const params = {
         id: transport.id,
         iceParameters: transport.iceParameters,
         iceCandidates: transport.iceCandidates,
         dtlsParameters: transport.dtlsParameters,
       };
+      log.info("transport ICE candidates", {
+        peerId: peer.id,
+        candidates: params.iceCandidates,
+      });
+      return params;
     } catch (err) {
       log.error("createWebRtcTransport failed", err);
       throw err;

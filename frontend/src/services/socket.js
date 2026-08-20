@@ -1,16 +1,13 @@
 import { io } from "socket.io-client";
 
-const SOCKET_URL = window.location.origin;
-
 let socket = null;
 
 export function getSocket() {
   try {
-    if (socket && socket.connected) return socket;
     if (socket) return socket;
-
-    console.log("[Socket] creating client", { url: SOCKET_URL });
-    socket = io(SOCKET_URL, {
+    const url = window.location.origin;
+    console.log("[Socket] creating client", { url, secure: window.isSecureContext });
+    socket = io(url, {
       path: "/socket.io",
       transports: ["websocket", "polling"],
       autoConnect: false,
@@ -18,7 +15,6 @@ export function getSocket() {
       reconnectionAttempts: 12,
       reconnectionDelay: 800,
     });
-
     socket.on("connect", () => console.log("[Socket] connected", socket.id));
     socket.on("disconnect", (reason) => console.warn("[Socket] disconnected", reason));
     socket.on("connect_error", (err) => console.error("[Socket] connect_error", err));

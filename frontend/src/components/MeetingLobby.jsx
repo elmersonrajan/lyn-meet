@@ -15,7 +15,17 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
     try {
       setError("");
       setBusy(true);
-      console.log("[Lobby] join clicked", { name, meetingId, role });
+      console.log("[Lobby] join clicked", {
+        name,
+        meetingId,
+        role,
+        href: window.location.href,
+        secure: window.isSecureContext,
+        media: Boolean(navigator.mediaDevices),
+      });
+      if (!window.isSecureContext || !navigator.mediaDevices) {
+        throw new Error("Open https://59.96.57.40:5173/ — camera needs HTTPS.");
+      }
       const socket = getSocket();
       if (!socket.connected) socket.connect();
 

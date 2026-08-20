@@ -40,6 +40,7 @@ function getIceServers() {
       log.warn("TURN not fully configured — clients will rely on STUN only");
     }
 
+    log.info("iceServers dump", iceServers);
     return iceServers;
   } catch (err) {
     log.error("getIceServers failed", err);

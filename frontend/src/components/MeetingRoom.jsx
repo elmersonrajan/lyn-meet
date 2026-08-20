@@ -39,18 +39,16 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     (async () => {
       try {
         console.log("[MeetingRoom] initializing mediasoup");
-          await media.initDevice({
-            routerRtpCapabilities: joinPayload.routerRtpCapabilities,
-            iceServers: joinPayload.iceServers,
-            peerId: joinPayload.peer?.id,
+        await media.initDevice({
+          routerRtpCapabilities: joinPayload.routerRtpCapabilities,
+          iceServers: joinPayload.iceServers,
+          peerId: joinPayload.peer?.id,
         });
         if (cancelled) return;
         await media.consumeExisting(joinPayload.producers || []);
         try {
           const again = await emitAck("get-producers", {});
-          if (!cancelled) {
-            await media.consumeExisting(again.producers || []);
-          }
+          if (!cancelled) await media.consumeExisting(again.producers || []);
         } catch (err) {
           console.error("[MeetingRoom] get-producers retry failed", err);
         }
@@ -215,7 +213,10 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     <div className="room">
       <div className="room-frame">
         <div className="stage-wrap">
-          {recording ? <div className="rec-pill">REC CLOUD</div> : null}
+          {recording ? <div className="rec-pill">REC CLOUD → .mp4</div> : null}
+          <div className="ice-strip">
+            ICE send: {media.iceState?.send || "new"} | recv: {media.iceState?.recv || "new"}
+          </div>
           <div className="stage-tools">
             <button
               className={stageMode === "draw" ? "active" : ""}
@@ -269,6 +270,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
           <InstructorVideo
             stream={isTeacher ? media.localStream : media.teacherStream}
             playAudio={!isTeacher}
+            iceState={isTeacher ? media.iceState.send : media.iceState.recv}
             name={teacherName}
             disconnected={teacherDisconnected}
           />

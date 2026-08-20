@@ -8,3 +8,8 @@ frontend/dist/
 *.webm
 *.mp4
 !coturn/**
+
+frontend/key.pem
+frontend/cert.pem
+backend/.env
+backend/recordings/

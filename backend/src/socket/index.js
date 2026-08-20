@@ -7,7 +7,7 @@ const {
   removePeerFromRoom,
   closeRoom,
 } = require("../mediasoup/roomManager");
-const { createLogger } = require("../utils/logger");
+const { createLogger, wrapAck, splitPayload } = require("../utils/logger");
 
 const log = createLogger("Socket");
 
@@ -73,7 +73,7 @@ function attachSocketHandlers(io) {
 
             socket.to(room.id).emit("peer-reconnected", currentTeacher.public());
 
-            callback({
+            wrapAck(log, callback)({
               ok: true,
               peer: currentTeacher.public(),
               participants: room.participants(),
@@ -103,12 +103,21 @@ function attachSocketHandlers(io) {
 
         socket.to(room.id).emit("peer-joined", peer.public());
 
-        callback({
+        const iceServers = getIceServers();
+        log.info("join-room ok", {
+          name,
+          meetingId,
+          role,
+          peerId: peer.id,
+          iceServerCount: iceServers.length,
+          producerCount: room.listProducers().length,
+        });
+        wrapAck(log, callback)({
           ok: true,
           peer: peer.public(),
           participants: room.participants(),
           routerRtpCapabilities: room.router.rtpCapabilities,
-          iceServers: getIceServers(),
+          iceServers,
           stageMode: room.stageMode,
           chat: room.chat,
           whiteboard: room.whiteboard,
@@ -118,7 +127,7 @@ function attachSocketHandlers(io) {
         });
       } catch (err) {
         log.error("join-room failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -129,10 +138,10 @@ function attachSocketHandlers(io) {
         if (!room || !peer) throw new Error("Not in a room");
         log.action("create-transport", { direction, peerId: peer.id });
         const params = await room.createWebRtcTransport(peer);
-        callback({ ok: true, params, direction });
+        wrapAck(log, callback)({ ok: true, params, direction });
       } catch (err) {
         log.error("create-transport failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -142,10 +151,10 @@ function attachSocketHandlers(io) {
         const peer = room?.peers.get(socket.data.peerId);
         if (!room || !peer) throw new Error("Not in a room");
         await room.connectTransport(peer, transportId, dtlsParameters);
-        callback({ ok: true });
+        wrapAck(log, callback)({ ok: true });
       } catch (err) {
         log.error("connect-transport failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -168,10 +177,10 @@ function attachSocketHandlers(io) {
           role: peer.role,
         });
         io.to(room.id).emit("participants", room.participants());
-        callback({ ok: true, id: producer.id });
+        wrapAck(log, callback)({ ok: true, id: producer.id });
       } catch (err) {
         log.error("produce failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -185,10 +194,10 @@ function attachSocketHandlers(io) {
           rtpCapabilities,
           transportId,
         });
-        callback({ ok: true, params });
+        wrapAck(log, callback)({ ok: true, params });
       } catch (err) {
         log.error("consume failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -198,14 +207,14 @@ function attachSocketHandlers(io) {
         const peer = room?.peers.get(socket.data.peerId);
         if (!room || !peer) throw new Error("Not in a room");
         await room.resumeConsumer(peer, consumerId);
-        callback({ ok: true });
+        wrapAck(log, callback)({ ok: true });
       } catch (err) {
         log.error("resume-consumer failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
-        socket.on("get-producers", (payload, callback) => {
+    socket.on("get-producers", (payload, callback) => {
       try {
         if (typeof payload === "function") {
           callback = payload;
@@ -217,12 +226,10 @@ function attachSocketHandlers(io) {
         }
         const room = getRoom(socket.data.roomId);
         if (!room) throw new Error("Not in a room");
-        callback({ ok: true, producers: room.listProducers() });
+        wrapAck(log, callback)({ ok: true, producers: room.listProducers() });
       } catch (err) {
         log.error("get-producers failed", err);
-        if (typeof callback === "function") {
-          callback({ ok: false, error: err.message });
-        }
+        if (typeof callback === "function") wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -234,10 +241,10 @@ function attachSocketHandlers(io) {
         await room.pauseProducer(peer, source);
         io.to(room.id).emit("participants", room.participants());
         io.to(room.id).emit("media-state", { peerId: peer.id, source, paused: true });
-        callback({ ok: true });
+        wrapAck(log, callback)({ ok: true });
       } catch (err) {
         log.error("pause-producer failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -249,10 +256,10 @@ function attachSocketHandlers(io) {
         await room.resumeProducer(peer, source);
         io.to(room.id).emit("participants", room.participants());
         io.to(room.id).emit("media-state", { peerId: peer.id, source, paused: false });
-        callback({ ok: true });
+        wrapAck(log, callback)({ ok: true });
       } catch (err) {
         log.error("resume-producer failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -266,10 +273,10 @@ function attachSocketHandlers(io) {
         await room.closeProducer(peer, source);
         socket.to(room.id).emit("producer-closed", { producerId, peerId: peer.id, source });
         io.to(room.id).emit("participants", room.participants());
-        callback({ ok: true });
+        wrapAck(log, callback)({ ok: true });
       } catch (err) {
         log.error("close-producer failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -286,10 +293,10 @@ function attachSocketHandlers(io) {
         }
         io.to(room.id).emit("force-mute");
         io.to(room.id).emit("participants", room.participants());
-        callback({ ok: true });
+        wrapAck(log, callback)({ ok: true });
       } catch (err) {
         log.error("mute-others failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -300,10 +307,10 @@ function attachSocketHandlers(io) {
         requireTeacher(peer);
         const rec = await room.startRecording();
         io.to(room.id).emit("recording-started", rec);
-        callback({ ok: true, recording: rec });
+        wrapAck(log, callback)({ ok: true, recording: rec });
       } catch (err) {
         log.error("start-recording failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -314,10 +321,10 @@ function attachSocketHandlers(io) {
         requireTeacher(peer);
         const rec = await room.stopRecording();
         io.to(room.id).emit("recording-stopped", rec);
-        callback({ ok: true, recording: rec });
+        wrapAck(log, callback)({ ok: true, recording: rec });
       } catch (err) {
         log.error("stop-recording failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -328,10 +335,10 @@ function attachSocketHandlers(io) {
         requireTeacher(peer);
         room.stageMode = mode;
         io.to(room.id).emit("stage-mode", { mode });
-        callback({ ok: true });
+        wrapAck(log, callback)({ ok: true });
       } catch (err) {
         log.error("set-stage failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -345,10 +352,10 @@ function attachSocketHandlers(io) {
           room.whiteboard.splice(0, room.whiteboard.length - 4000);
         }
         socket.to(room.id).emit("whiteboard-stroke", stroke);
-        callback?.({ ok: true });
+        wrapAck(log, callback)({ ok: true });
       } catch (err) {
         log.error("whiteboard-stroke failed", err);
-        callback?.({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -359,10 +366,10 @@ function attachSocketHandlers(io) {
         requireTeacher(peer);
         room.whiteboard = [];
         io.to(room.id).emit("whiteboard-clear");
-        callback({ ok: true });
+        wrapAck(log, callback)({ ok: true });
       } catch (err) {
         log.error("whiteboard-clear failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -382,10 +389,10 @@ function attachSocketHandlers(io) {
         if (!message.text.trim()) throw new Error("Message is empty");
         room.chat.push(message);
         io.to(room.id).emit("chat-message", message);
-        callback({ ok: true, message });
+        wrapAck(log, callback)({ ok: true, message });
       } catch (err) {
         log.error("post-message failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
@@ -397,20 +404,20 @@ function attachSocketHandlers(io) {
         log.action("close-session", { roomId: room.id });
         io.to(room.id).emit("session-closed", { reason: "Teacher closed the session" });
         await closeRoom(room);
-        callback({ ok: true });
+        wrapAck(log, callback)({ ok: true });
       } catch (err) {
         log.error("close-session failed", err);
-        callback({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 
     socket.on("leave-room", async (_payload, callback) => {
       try {
         await handleDisconnect(socket, { voluntary: true });
-        callback?.({ ok: true });
+        wrapAck(log, callback)({ ok: true });
       } catch (err) {
         log.error("leave-room failed", err);
-        callback?.({ ok: false, error: err.message });
+        wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
 

@@ -8,8 +8,10 @@ export function useMediasoup({ socket, role, enabled }) {
   const recvTransportRef = useRef(null);
   const producersRef = useRef({});
   const consumedRef = useRef(new Set());
+  const pendingRef = useRef([]);
   const startingRef = useRef(false);
   const myPeerIdRef = useRef(null);
+  const iceServersRef = useRef([]);
 
   const teacherMsRef = useRef(new MediaStream());
   const screenMsRef = useRef(new MediaStream());
@@ -21,40 +23,42 @@ export function useMediasoup({ socket, role, enabled }) {
   const [camOn, setCamOn] = useState(role === "teacher");
   const [sharing, setSharing] = useState(false);
   const [ready, setReady] = useState(false);
-
-  const pendingRef = useRef([]);
+  const [iceState, setIceState] = useState({ send: "new", recv: "new" });
 
   const bumpTeacher = () => {
-    setTeacherStream(new MediaStream(teacherMsRef.current.getTracks()));
+    try {
+      setTeacherStream(new MediaStream(teacherMsRef.current.getTracks()));
+    } catch (err) {
+      console.error("[Mediasoup] bumpTeacher failed", err);
+    }
   };
   const bumpScreen = () => {
-    setScreenStream(new MediaStream(screenMsRef.current.getTracks()));
+    try {
+      setScreenStream(new MediaStream(screenMsRef.current.getTracks()));
+    } catch (err) {
+      console.error("[Mediasoup] bumpScreen failed", err);
+    }
   };
 
   const attachRemoteTrack = useCallback((track, source) => {
     try {
       console.log("[Mediasoup] attachRemoteTrack", source, track.kind, track.id, track.readyState);
-      if (source === "screen") {
-        screenMsRef.current.getTracks().forEach((t) => {
-          if (t.kind === track.kind) screenMsRef.current.removeTrack(t);
-        });
-        screenMsRef.current.addTrack(track);
-        bumpScreen();
-      } else {
-        teacherMsRef.current.getTracks().forEach((t) => {
-          if (t.kind === track.kind) teacherMsRef.current.removeTrack(t);
-        });
-        teacherMsRef.current.addTrack(track);
-        bumpTeacher();
-      }
+      const bucket = source === "screen" ? screenMsRef : teacherMsRef;
+      bucket.current.getTracks().forEach((t) => {
+        if (t.kind === track.kind) bucket.current.removeTrack(t);
+      });
+      bucket.current.addTrack(track);
+      if (source === "screen") bumpScreen();
+      else bumpTeacher();
     } catch (err) {
       console.error("[Mediasoup] attachRemoteTrack failed", err);
     }
   }, []);
 
-    const consumeProducer = useCallback(
+  const consumeProducer = useCallback(
     async (producer) => {
       try {
+        if (!producer || !producer.producerId) return;
         if (!deviceRef.current || !recvTransportRef.current) {
           pendingRef.current.push(producer);
           console.log("[Mediasoup] queued consume", producer);
@@ -64,9 +68,11 @@ export function useMediasoup({ socket, role, enabled }) {
           console.log("[Mediasoup] skip own producer", producer);
           return;
         }
+        if (producer.role === "student") {
+          console.log("[Mediasoup] skip student producer (cam/audio first = teacher only)", producer);
+          return;
+        }
         if (consumedRef.current.has(producer.producerId)) return;
-        if (producer.role && producer.role !== "teacher" && producer.source === "video") return;
-
         consumedRef.current.add(producer.producerId);
         console.log("[Mediasoup] consumeProducer", producer);
         const res = await emitAck("consume", {
@@ -93,36 +99,39 @@ export function useMediasoup({ socket, role, enabled }) {
   const startLocalMedia = useCallback(async () => {
     try {
       const md = navigator.mediaDevices;
-      if (!md || !md.getUserMedia) {
-        throw new Error("Camera needs HTTPS. Open https://59.96.57.40:5173/");
+      if (!md || typeof md.getUserMedia !== "function") {
+        throw new Error(
+          "Camera/mic blocked. Open https://59.96.57.40:5173/ (HTTPS required).",
+        );
       }
       const constraints =
         role === "teacher"
-          ? { audio: true, video: { width: 1280, height: 720 } }
+          ? { audio: true, video: { width: { ideal: 1280 }, height: { ideal: 720 } } }
           : { audio: true, video: false };
       console.log("[Mediasoup] getUserMedia", constraints);
       const stream = await md.getUserMedia(constraints);
       setLocalStream(stream);
-      if (role === "teacher") {
-        stream.getTracks().forEach((t) => teacherMsRef.current.addTrack(t));
-        bumpTeacher();
-      }
 
       const audioTrack = stream.getAudioTracks()[0];
       if (audioTrack && sendTransportRef.current && !producersRef.current.audio) {
         producersRef.current.audio = await sendTransportRef.current.produce({
           track: audioTrack,
+          encodings: [{ maxBitrate: 64000 }],
           appData: { source: "audio" },
         });
+        console.log("[Mediasoup] audio producer created");
       }
 
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack && role === "teacher" && sendTransportRef.current && !producersRef.current.video) {
         producersRef.current.video = await sendTransportRef.current.produce({
           track: videoTrack,
+          encodings: [{ maxBitrate: 800000 }],
+          codecOptions: { videoGoogleStartBitrate: 400 },
           appData: { source: "video" },
         });
         setCamOn(true);
+        console.log("[Mediasoup] video producer created");
       }
     } catch (err) {
       console.error("[Mediasoup] startLocalMedia failed", err);
@@ -139,17 +148,36 @@ export function useMediasoup({ socket, role, enabled }) {
         }
         startingRef.current = true;
         if (peerId) myPeerIdRef.current = peerId;
-        console.log("[Mediasoup] initDevice");
+        iceServersRef.current = iceServers || [];
+        console.log("[Mediasoup] initDevice", {
+          peerId,
+          iceServers: iceServersRef.current,
+          secure: window.isSecureContext,
+          hasMedia: Boolean(navigator.mediaDevices),
+        });
+
         const device = new mediasoupClient.Device();
         await device.load({ routerRtpCapabilities });
         deviceRef.current = device;
 
         const makeTransport = async (direction) => {
           const { params } = await emitAck("create-transport", { direction });
+          console.log("[Mediasoup] transport params", direction, {
+            id: params.id,
+            iceCandidates: params.iceCandidates,
+          });
           const transport =
             direction === "send"
-              ? device.createSendTransport({ ...params, iceServers })
-              : device.createRecvTransport({ ...params, iceServers });
+              ? device.createSendTransport({
+                  ...params,
+                  iceServers: iceServersRef.current,
+                  iceTransportPolicy: "all",
+                })
+              : device.createRecvTransport({
+                  ...params,
+                  iceServers: iceServersRef.current,
+                  iceTransportPolicy: "all",
+                });
 
           transport.on("connect", async ({ dtlsParameters }, callback, errback) => {
             try {
@@ -185,6 +213,15 @@ export function useMediasoup({ socket, role, enabled }) {
 
           transport.on("connectionstatechange", (state) => {
             console.log("[Mediasoup] transport state", direction, state);
+            setIceState((s) => ({ ...s, [direction]: state }));
+            if (state === "failed") {
+              console.error(
+                "[Mediasoup] ICE failed. Office router must forward UDP/TCP 40000-49999 and 3478 to this server.",
+              );
+            }
+          });
+          transport.on("icegatheringstatechange", (state) => {
+            console.log("[Mediasoup] ICE gathering", direction, state);
           });
 
           return transport;
@@ -203,7 +240,7 @@ export function useMediasoup({ socket, role, enabled }) {
         throw err;
       }
     },
-    [startLocalMedia],
+    [startLocalMedia, consumeProducer],
   );
 
   useEffect(() => {
@@ -358,5 +395,6 @@ export function useMediasoup({ socket, role, enabled }) {
     camOn,
     sharing,
     ready,
+    iceState,
   };
 }
