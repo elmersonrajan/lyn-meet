@@ -149,68 +149,43 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     }
   };
 
-  const uploadBlob = async (blob) => {
-    try {
-      if (!blob) {
-        console.warn("[MeetingRoom] no blob — logs only");
-        await fetch("/api/recordings/upload", {
-          method: "POST",
-          headers: { "X-Meeting-Id": session.meetingId || "1" },
-          body: new Uint8Array(),
-        });
-        return;
-      }
-      console.log("[MeetingRoom] uploading recording", { bytes: blob.size, type: blob.type });
-      const res = await fetch("/api/recordings/upload", {
-        method: "POST",
-        headers: {
-          "Content-Type": blob.type || "video/webm",
-          "X-Meeting-Id": session.meetingId || "1",
-        },
-        body: blob,
-      });
-      const json = await res.json();
-      console.log("[MeetingRoom] upload ack", json);
-      if (!json.ok) throw new Error(json.error || "upload failed");
-    } catch (err) {
-      console.error("[MeetingRoom] upload failed", err);
-      throw err;
-    }
-  };
-
   const onToggleRecord = async () => {
     try {
       if (!isTeacher) return;
       if (recording) {
-        console.log("[MeetingRoom] stop recording");
-        const blob = await localRec.stop();
+        console.log("[MeetingRoom] stop recording (finalize server file)");
+        await localRec.stop();
         try {
           await emitAck("stop-recording", {});
         } catch (err) {
           console.error("[MeetingRoom] stop-recording socket failed", err);
         }
-        await uploadBlob(blob);
         setRecording(false);
-        setToast(blob ? "Recording uploaded (.mp4 on server)" : "No A/V — log file only");
+        setToast("Recording saved on server (chunks already uploaded)");
       } else {
         console.log("[MeetingRoom] start recording");
+        let recorderId = "";
+        try {
+          const rec = await emitAck("start-recording", {});
+          recorderId = rec?.recording?.id || "";
+          console.log("[MeetingRoom] server recorder", rec?.recording);
+        } catch (err) {
+          console.error("[MeetingRoom] start-recording socket failed", err);
+        }
         const info = await localRec.start({
           localStream: media.localStream,
           screenStream: media.screenStream,
           canvas: board.canvasRef?.current,
           micOn: media.micOn,
+          meetingId: session.meetingId || "1",
+          recorderId,
         });
         console.log("[MeetingRoom] local rec mode", info);
-        try {
-          await emitAck("start-recording", {});
-        } catch (err) {
-          console.error("[MeetingRoom] start-recording socket failed", err);
-        }
         setRecording(true);
         if (info?.mode === "logs-only") {
-          setToast("No cam/mic/screen — whiteboard + logs only");
+          setToast("No cam/mic/screen — logs only");
         } else {
-          setToast("Recording (camera / screen / whiteboard)");
+          setToast("Recording — uploading to server every 3s");
         }
       }
     } catch (err) {
@@ -218,6 +193,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       setToast(err.message);
     }
   };
+
 
   const onMuteOthers = async () => {
     try {
