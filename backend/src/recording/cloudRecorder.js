@@ -81,6 +81,7 @@ class CloudRecorder {
     this.consumers = [];
     this.active = false;
     this.mode = "none";
+    this.rawPath = null;
     this.id = `rec_${Date.now()}`;
   }
 
@@ -229,11 +230,84 @@ class CloudRecorder {
     }
   }
 
-  async stop() {
+  async appendChunk(buffer) {
+    try {
+      ensureDir(RECORDINGS_DIR);
+      if (!buffer || !buffer.length) {
+        log.warn("empty chunk skipped");
+        return this.snapshot();
+      }
+      this.rawPath = this.rawPath || path.join(RECORDINGS_DIR, `${this.room.id}_${this.id}.webm`);
+      fs.appendFileSync(this.rawPath, buffer);
+      log.info("chunk appended (teacher still online)", {
+        bytes: buffer.length,
+        total: fs.statSync(this.rawPath).size,
+        rawPath: this.rawPath,
+      });
+      appendMeetingLog("chunk", { bytes: buffer.length, total: fs.statSync(this.rawPath).size });
+      this.outputPath = this.rawPath;
+      return this.snapshot();
+    } catch (err) {
+      log.error("appendChunk failed", err);
+      appendMeetingLog("chunk failed", { message: err.message });
+      throw err;
+    }
+  }
+
+  async finalizeRaw() {
+    try {
+      if (!this.rawPath || !fs.existsSync(this.rawPath)) {
+        log.warn("finalize: no webm yet (teacher dropped before first chunk?)");
+        appendMeetingLog("finalize no webm");
+        return this.snapshot();
+      }
+      const mp4Path = path.join(RECORDINGS_DIR, `${this.room.id}_${this.id}.mp4`);
+      log.info("finalize converting webm → mp4", { from: this.rawPath, to: mp4Path });
+      await new Promise((resolve) => {
+        try {
+          const ff = spawn("ffmpeg", [
+            "-y", "-loglevel", "warning", "-i", this.rawPath,
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
+            mp4Path,
+          ], { stdio: ["ignore", "pipe", "pipe"] });
+          ff.stderr.on("data", (c) => log.info("ffmpeg finalize", String(c).trim()));
+          ff.on("error", (err) => {
+            log.error("ffmpeg finalize spawn", err);
+            resolve();
+          });
+          ff.on("exit", (code) => {
+            if (code === 0) {
+              this.outputPath = mp4Path;
+              log.info("mp4 ready", { mp4Path });
+            } else {
+              log.warn("keep webm, ffmpeg finalize code", code);
+              this.outputPath = this.rawPath;
+            }
+            resolve();
+          });
+        } catch (err) {
+          log.error("finalizeRaw ffmpeg", err);
+          resolve();
+        }
+      });
+      return this.snapshot();
+    } catch (err) {
+      log.error("finalizeRaw failed", err);
+      throw err;
+    }
+  }
+
+
     try {
       log.action("stop", { recorderId: this.id, roomId: this.room.id });
       appendMeetingLog("recording stop", { recorderId: this.id });
       this.active = false;
+      try {
+        await this.finalizeRaw();
+      } catch (err) {
+        log.error("stop finalizeRaw", err);
+      }
       if (this.process && !this.process.killed) {
         this.process.kill("SIGINT");
         await new Promise((resolve) => {
