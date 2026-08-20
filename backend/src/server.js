@@ -117,6 +117,54 @@ async function main() {
     app.use("/recordings", express.static(RECORDINGS_DIR));
 
     app.post(
+      "/api/recordings/chunk",
+      express.raw({ type: "*/*", limit: "80mb" }),
+      async (req, res) => {
+        try {
+          const meetingId = String(req.headers["x-meeting-id"] || "unknown");
+          const recId = String(req.headers["x-recorder-id"] || "");
+          const isFinal = String(req.headers["x-final"] || "0") === "1";
+          const buf = req.body;
+          log.action("recording chunk", {
+            meetingId,
+            recId,
+            bytes: buf?.length || 0,
+            final: isFinal,
+          });
+          appendMeetingLog("recording chunk", { meetingId, recId, bytes: buf?.length || 0, final: isFinal });
+
+          let room = rooms.get(meetingId);
+          if (!room) {
+            log.warn("chunk: room gone (teacher dropped?) — still append if recorder file exists");
+          }
+          if (room && !room.recorder) {
+            const { CloudRecorder } = require("./recording/cloudRecorder");
+            room.recorder = new CloudRecorder(room);
+            room.recorder.id = recId || room.recorder.id;
+            room.recorder.active = true;
+          }
+          if (room && room.recorder) {
+            if (buf && buf.length) await room.recorder.appendChunk(buf);
+            if (isFinal) await room.recorder.finalizeRaw();
+            res.json({ ok: true, recording: room.recorder.snapshot() });
+            return;
+          }
+
+          const fs = require("fs");
+          const pathMod = require("path");
+          fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
+          const name = `${meetingId}_${recId || "orphan"}.webm`;
+          if (buf && buf.length) fs.appendFileSync(pathMod.join(RECORDINGS_DIR, name), buf);
+          res.json({ ok: true, file: name, orphan: true });
+        } catch (err) {
+          log.error("/api/recordings/chunk failed", err);
+          appendMeetingLog("chunk http failed", { message: err.message });
+          res.status(500).json({ ok: false, error: err.message });
+        }
+      },
+    );
+
+    app.post(
       "/api/recordings/upload",
       express.raw({ type: "*/*", limit: "400mb" }),
       async (req, res) => {
@@ -161,7 +209,7 @@ async function main() {
         }
         const files = fs
           .readdirSync(RECORDINGS_DIR)
-          .filter((f) => f.endsWith(".mp4"))
+          .filter((f) => f.endsWith(".mp4") || f.endsWith(".webm"))
           .map((name) => ({
             name,
             url: `/recordings/${encodeURIComponent(name)}`,
