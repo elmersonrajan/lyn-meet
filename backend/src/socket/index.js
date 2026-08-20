@@ -8,6 +8,7 @@ const {
   closeRoom,
 } = require("../mediasoup/roomManager");
 const { createLogger, wrapAck, splitPayload } = require("../utils/logger");
+const { resetMeetingLog, appendMeetingLog } = require("../utils/meetingLog");
 
 const log = createLogger("Socket");
 
@@ -112,6 +113,10 @@ function attachSocketHandlers(io) {
           iceServerCount: iceServers.length,
           producerCount: room.listProducers().length,
         });
+        if (role === "teacher") {
+          resetMeetingLog({ meetingId, teacher: name, peerId: peer.id });
+        }
+        appendMeetingLog("join-room", { name, role, meetingId, peerId: peer.id });
         wrapAck(log, callback)({
           ok: true,
           peer: peer.public(),
@@ -306,6 +311,7 @@ function attachSocketHandlers(io) {
         const peer = room?.peers.get(socket.data.peerId);
         requireTeacher(peer);
         const rec = await room.startRecording();
+        appendMeetingLog("start-recording ack", rec);
         io.to(room.id).emit("recording-started", rec);
         wrapAck(log, callback)({ ok: true, recording: rec });
       } catch (err) {
