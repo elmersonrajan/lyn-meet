@@ -3,7 +3,6 @@ import { useUser } from "../context/UserContext.jsx";
 import { emitAck } from "../services/socket.js";
 import { useMediasoup } from "../hooks/useMediasoup.js";
 import { useWhiteboard } from "../hooks/useWhiteboard.js";
-import { useLocalRecorder } from "../hooks/useLocalRecorder.js";
 import InstructorVideo from "./InstructorVideo.jsx";
 import Participants from "./Participants.jsx";
 import Toolbar from "./Toolbar.jsx";
@@ -34,8 +33,6 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     isTeacher,
     initial: joinPayload.whiteboard || [],
   });
-
-  const localRec = useLocalRecorder();
 
   useEffect(() => {
     let cancelled = false;
@@ -153,40 +150,16 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     try {
       if (!isTeacher) return;
       if (recording) {
-        console.log("[MeetingRoom] stop recording (finalize server file)");
-        await localRec.stop();
-        try {
-          await emitAck("stop-recording", {});
-        } catch (err) {
-          console.error("[MeetingRoom] stop-recording socket failed", err);
-        }
+        console.log("[MeetingRoom] stop SERVER recording");
+        await emitAck("stop-recording", {});
         setRecording(false);
-        setToast("Recording saved on server (chunks already uploaded)");
+        setToast("Server recording stopped — see recordings/ and logs/last-meeting.log");
       } else {
-        console.log("[MeetingRoom] start recording");
-        let recorderId = "";
-        try {
-          const rec = await emitAck("start-recording", {});
-          recorderId = rec?.recording?.id || "";
-          console.log("[MeetingRoom] server recorder", rec?.recording);
-        } catch (err) {
-          console.error("[MeetingRoom] start-recording socket failed", err);
-        }
-        const info = await localRec.start({
-          localStream: media.localStream,
-          screenStream: media.screenStream,
-          canvas: board.canvasRef?.current,
-          micOn: media.micOn,
-          meetingId: session.meetingId || "1",
-          recorderId,
-        });
-        console.log("[MeetingRoom] local rec mode", info);
+        console.log("[MeetingRoom] start SERVER recording (Zoom SFU)");
+        const rec = await emitAck("start-recording", {});
+        console.log("[MeetingRoom] server recorder", rec?.recording);
         setRecording(true);
-        if (info?.mode === "logs-only") {
-          setToast("No cam/mic/screen — logs only");
-        } else {
-          setToast("Recording — uploading to server every 3s");
-        }
+        setToast("Recording on SERVER (needs ICE for picture)");
       }
     } catch (err) {
       console.error("[MeetingRoom] record toggle failed", err);
