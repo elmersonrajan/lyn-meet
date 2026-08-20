@@ -10,6 +10,7 @@ const { attachSocketHandlers } = require("./socket");
 const { RECORDINGS_DIR } = require("./recording/cloudRecorder");
 const { rooms } = require("./mediasoup/roomManager");
 const { createLogger } = require("./utils/logger");
+const { appendMeetingLog } = require("./utils/meetingLog");
 
 const log = createLogger("Server");
 
@@ -114,6 +115,42 @@ async function main() {
     });
 
     app.use("/recordings", express.static(RECORDINGS_DIR));
+
+    app.post(
+      "/api/recordings/upload",
+      express.raw({ type: "*/*", limit: "400mb" }),
+      async (req, res) => {
+        try {
+          const meetingId = String(req.headers["x-meeting-id"] || "unknown");
+          const contentType = req.headers["content-type"] || "video/webm";
+          const buf = req.body;
+          log.action("upload recording", { meetingId, bytes: buf?.length, contentType });
+          appendMeetingLog("upload recording", { meetingId, bytes: buf?.length });
+          if (!buf || !buf.length) {
+            log.warn("upload empty — logs only");
+            appendMeetingLog("WARN upload empty — no audio/video/screen/whiteboard");
+            res.json({ ok: true, logsOnly: true });
+            return;
+          }
+          const room = rooms.get(meetingId);
+          if (room && room.recorder) {
+            const snap = await room.recorder.ingestClientBlob(buf, contentType);
+            res.json({ ok: true, recording: snap });
+            return;
+          }
+          const fs = require("fs");
+          const path = require("path");
+          fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
+          const name = `${meetingId}_upload_${Date.now()}.webm`;
+          fs.writeFileSync(path.join(RECORDINGS_DIR, name), buf);
+          res.json({ ok: true, file: name });
+        } catch (err) {
+          log.error("/api/recordings/upload failed", err);
+          appendMeetingLog("upload failed", { message: err.message });
+          res.status(500).json({ ok: false, error: err.message });
+        }
+      },
+    );
 
     app.get("/api/recordings", (req, res) => {
       try {
