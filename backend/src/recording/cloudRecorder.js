@@ -101,12 +101,26 @@ class CloudRecorder {
       this.active = true;
       this.startedAt = Date.now();
 
+      appendMeetingLog("recording start FULL", {
+        roomId: this.room.id,
+        recorderId: this.id,
+        whiteboardStrokes: this.room.whiteboard,
+        chat: this.room.chat,
+        participants: this.room.participants(),
+        producers: this.room.listProducers(),
+        hasAudio: Boolean(audioProducer),
+        hasVideo: Boolean(videoProducer),
+      });
+
       if (!audioProducer && !videoProducer) {
-        this.mode = "client-fallback";
-        log.warn("NO audio/video/screen on SFU — Zoom-style: teacher browser will record cam/screen/whiteboard");
-        appendMeetingLog("no sfu media — client fallback (whiteboard if no cam/screen)");
+        this.mode = "whiteboard-json";
+        log.warn("NO audio/video/screen on server — saving FULL whiteboard + chat JSON (Zoom still needs RTP for picture)");
+        appendMeetingLog("WARN no A/V on SFU — whiteboard/chat dumped to recordings json");
+        this._writeSidecar();
         return this.snapshot();
       }
+
+      this.mode = "sfu-ffmpeg";
 
       this.mode = "sfu-ffmpeg";
       const audioMeta = audioProducer ? await this._attachProducer(audioProducer) : null;
@@ -187,6 +201,31 @@ class CloudRecorder {
       log.error("_attachProducer failed", err);
       appendMeetingLog("attach producer failed", { message: err.message });
       throw err;
+    }
+  }
+
+  _writeSidecar() {
+    try {
+      ensureDir(RECORDINGS_DIR);
+      const sidecar = path.join(RECORDINGS_DIR, `${this.room.id}_${this.id}.json`);
+      const body = {
+        roomId: this.room.id,
+        recorderId: this.id,
+        startedAt: this.startedAt,
+        stoppedAt: Date.now(),
+        mode: this.mode,
+        outputPath: this.outputPath,
+        participants: this.room.participants(),
+        producers: this.room.listProducers(),
+        stageMode: this.room.stageMode,
+        chat: this.room.chat,
+        whiteboard: this.room.whiteboard,
+      };
+      fs.writeFileSync(sidecar, JSON.stringify(body, null, 2), "utf8");
+      appendMeetingLog("sidecar FULL dump", body);
+      log.info("wrote full meeting sidecar", sidecar);
+    } catch (err) {
+      log.error("_writeSidecar failed", err);
     }
   }
 
@@ -323,6 +362,7 @@ class CloudRecorder {
       }
       this.consumers = [];
       this.transports = [];
+      this._writeSidecar();
       log.info("cloud recording stopped", { output: this.outputPath });
       return this.snapshot();
     } catch (err) {
