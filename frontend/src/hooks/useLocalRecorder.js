@@ -47,18 +47,49 @@ function whiteboardStream(canvas) {
   }
 }
 
+async function sendChunk({ blob, meetingId, recorderId, isFinal }) {
+  try {
+    if (!blob || !blob.size) {
+      if (!isFinal) return;
+    }
+    console.log("[LocalRec] upload chunk", {
+      bytes: blob?.size || 0,
+      meetingId,
+      recorderId,
+      isFinal,
+    });
+    const res = await fetch("/api/recordings/chunk", {
+      method: "POST",
+      headers: {
+        "Content-Type": blob?.type || "video/webm",
+        "X-Meeting-Id": meetingId || "1",
+        "X-Recorder-Id": recorderId || "",
+        "X-Final": isFinal ? "1" : "0",
+      },
+      body: blob && blob.size ? blob : new Uint8Array(),
+    });
+    const json = await res.json();
+    console.log("[LocalRec] chunk ack", json);
+    return json;
+  } catch (err) {
+    console.error("[LocalRec] sendChunk failed (will retry next slice)", err);
+    return null;
+  }
+}
+
 export function useLocalRecorder() {
   const recRef = useRef(null);
-  const chunksRef = useRef([]);
   const extraStopRef = useRef([]);
+  const idsRef = useRef({ meetingId: "1", recorderId: "" });
+  const uploadingRef = useRef(Promise.resolve());
 
-  async function start({ localStream, screenStream, canvas, micOn }) {
+  async function start({ localStream, screenStream, canvas, micOn, meetingId, recorderId }) {
     try {
       extraStopRef.current.forEach((fn) => {
         try { fn(); } catch (e) { console.error("[LocalRec] extra stop", e); }
       });
       extraStopRef.current = [];
-      chunksRef.current = [];
+      idsRef.current = { meetingId, recorderId };
 
       const tracks = [];
       const screenTrack = screenStream?.getVideoTracks?.()?.find((t) => t.readyState === "live");
@@ -99,17 +130,25 @@ export function useLocalRecorder() {
 
       const mixed = new MediaStream(tracks);
       const mime = pickMime();
-      console.log("[LocalRec] MediaRecorder start", { mime, tracks: tracks.map((t) => t.kind) });
+      console.log("[LocalRec] MediaRecorder start, upload every 3s", { mime, meetingId, recorderId });
       const rec = new MediaRecorder(mixed, { mimeType: mime, videoBitsPerSecond: 1_200_000 });
       rec.ondataavailable = (ev) => {
         try {
-          if (ev.data && ev.data.size) chunksRef.current.push(ev.data);
+          if (!ev.data || !ev.data.size) return;
+          uploadingRef.current = uploadingRef.current.then(() =>
+            sendChunk({
+              blob: ev.data,
+              meetingId: idsRef.current.meetingId,
+              recorderId: idsRef.current.recorderId,
+              isFinal: false,
+            }),
+          );
         } catch (err) {
           console.error("[LocalRec] dataavailable failed", err);
         }
       };
       rec.onerror = (ev) => console.error("[LocalRec] MediaRecorder error", ev);
-      rec.start(1000);
+      rec.start(3000);
       recRef.current = rec;
       return { mode: "recording", mime };
     } catch (err) {
@@ -125,17 +164,28 @@ export function useLocalRecorder() {
         if (!rec || rec.state === "inactive") {
           extraStopRef.current.forEach((fn) => { try { fn(); } catch (e) {} });
           extraStopRef.current = [];
-          resolve(null);
+          sendChunk({
+            blob: null,
+            meetingId: idsRef.current.meetingId,
+            recorderId: idsRef.current.recorderId,
+            isFinal: true,
+          }).finally(() => resolve(null));
           return;
         }
-        rec.onstop = () => {
+        rec.onstop = async () => {
           try {
             extraStopRef.current.forEach((fn) => { try { fn(); } catch (e) {} });
             extraStopRef.current = [];
-            const blob = new Blob(chunksRef.current, { type: rec.mimeType || "video/webm" });
-            console.log("[LocalRec] stopped", { bytes: blob.size, type: blob.type });
+            await uploadingRef.current;
+            await sendChunk({
+              blob: null,
+              meetingId: idsRef.current.meetingId,
+              recorderId: idsRef.current.recorderId,
+              isFinal: true,
+            });
             recRef.current = null;
-            resolve(blob.size ? blob : null);
+            console.log("[LocalRec] stopped + finalized on server");
+            resolve(true);
           } catch (err) {
             console.error("[LocalRec] onstop failed", err);
             resolve(null);
