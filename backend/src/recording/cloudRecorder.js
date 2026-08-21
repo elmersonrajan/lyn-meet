@@ -11,7 +11,7 @@ const RECORDINGS_DIR = path.resolve(
 );
 
 const LAYOUT_W = 1280;
-const LAYOUT_H = 720;
+const LAYOUT_H = 720; //need to change to 1920
 const PIP_W = 280;
 const PIP_H = 158;
 
