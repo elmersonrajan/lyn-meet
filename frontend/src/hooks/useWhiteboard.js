@@ -113,7 +113,13 @@ export function useWhiteboard({ socket, isTeacher, initial = [] }) {
       if (!isTeacher || !drawing.current) return;
       const stroke = drawing.current;
       drawing.current = false;
-      await emitAck("whiteboard-stroke", stroke);
+      const canvas = canvasRef.current;
+      const payload = {
+        ...stroke,
+        canvasWidth: canvas ? canvas.width : 1280,
+        canvasHeight: canvas ? canvas.height : 720,
+      };
+      await emitAck("whiteboard-stroke", payload);
     } catch (err) {
       console.error("[Whiteboard] onUp failed", err);
     }
