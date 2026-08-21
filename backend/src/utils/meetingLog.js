@@ -24,11 +24,17 @@ function append(line) {
   }
 }
 
+let writing = false;
+
 function writeEntry(message, extra) {
+  if (writing) return;
   try {
+    writing = true;
     append(JSON.stringify({ t: new Date().toISOString(), message, extra }));
   } catch (err) {
     log.error("writeEntry failed", err);
+  } finally {
+    writing = false;
   }
 }
 
@@ -52,4 +58,34 @@ function reset({ meetingId, teacher, peerId }) {
   }
 }
 
-module.exports = { reset, writeEntry, LOG_FILE };
+function teeConsoleToMeetingLog() {
+  try {
+    if (console.__meetingLogTee) return;
+    console.__meetingLogTee = true;
+    const origLog = console.log.bind(console);
+    const origErr = console.error.bind(console);
+    const origWarn = console.warn.bind(console);
+
+    console.log = (...args) => {
+      origLog(...args);
+      writeEntry("console.log", args);
+    };
+    console.error = (...args) => {
+      origErr(...args);
+      writeEntry("console.error", args);
+    };
+    console.warn = (...args) => {
+      origWarn(...args);
+      writeEntry("console.warn", args);
+    };
+  } catch (err) {
+    log.error("teeConsoleToMeetingLog failed", err);
+  }
+}
+
+module.exports = {
+  reset,
+  writeEntry,
+  LOG_FILE,
+  teeConsoleToMeetingLog,
+};
