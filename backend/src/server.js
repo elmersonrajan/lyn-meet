@@ -1,4 +1,6 @@
 require("dotenv").config();
+const { teeConsoleToMeetingLog, appendMeetingLog, LOG_PATH } = require("./utils/meetingLog");
+teeConsoleToMeetingLog();
 
 const path = require("path");
 const http = require("http");
@@ -10,7 +12,6 @@ const { attachSocketHandlers } = require("./socket");
 const { RECORDINGS_DIR } = require("./recording/cloudRecorder");
 const { rooms } = require("./mediasoup/roomManager");
 const { createLogger } = require("./utils/logger");
-const { appendMeetingLog } = require("./utils/meetingLog");
 
 const log = createLogger("Server");
 
@@ -56,6 +57,20 @@ async function main() {
     });
 
     const ffmpeg = ffmpegAvailable();
+
+    app.get("/api/logs", (_req, res) => {
+      try {
+        const fs = require("fs");
+        if (!fs.existsSync(LOG_PATH)) {
+          res.type("text/plain").send("(no meeting log yet)\n");
+          return;
+        }
+        res.type("text/plain").send(fs.readFileSync(LOG_PATH, "utf8"));
+      } catch (err) {
+        log.error("/api/logs failed", err);
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
 
     app.get("/health", (_req, res) => {
       try {
@@ -231,6 +246,7 @@ async function main() {
       },
       pingTimeout: 20000,
       pingInterval: 10000,
+      maxHttpBufferSize: 20 * 1024 * 1024,
     });
 
     attachSocketHandlers(io);
