@@ -33,6 +33,14 @@ function attachSocketHandlers(io) {
     socket.data.peerId = null;
     socket.data.roomId = null;
 
+    socket.on("client-log", (payload) => {
+      try {
+        appendMeetingLog("CLIENT", payload);
+      } catch (err) {
+        log.error("client-log failed", err);
+      }
+    });
+
     socket.on("join-room", async (payload, callback) => {
       try {
         const name = String(payload?.name || "").trim();
@@ -301,6 +309,37 @@ function attachSocketHandlers(io) {
         wrapAck(log, callback)({ ok: true });
       } catch (err) {
         log.error("mute-others failed", err);
+        wrapAck(log, callback)({ ok: false, error: err.message });
+      }
+    });
+
+    socket.on("recording-chunk", async (payload, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        requireTeacher(peer);
+        if (!room.recorder) {
+          throw new Error("Recording is not active");
+        }
+        const raw = payload?.data;
+        let buf = Buffer.alloc(0);
+        if (raw) {
+          if (Buffer.isBuffer(raw)) buf = raw;
+          else if (raw instanceof ArrayBuffer) buf = Buffer.from(raw);
+          else if (ArrayBuffer.isView(raw)) buf = Buffer.from(raw.buffer);
+          else buf = Buffer.from(raw);
+        }
+        log.action("recording-chunk socket", {
+          bytes: buf.length,
+          final: Boolean(payload?.isFinal),
+          recId: room.recorder.id,
+        });
+        if (buf.length) await room.recorder.appendChunk(buf);
+        else if (!payload?.isFinal) log.warn("skip empty chunk");
+        if (payload?.isFinal) await room.recorder.finalizeRaw();
+        wrapAck(log, callback)({ ok: true, bytes: buf.length, recording: room.recorder.snapshot() });
+      } catch (err) {
+        log.error("recording-chunk failed", err);
         wrapAck(log, callback)({ ok: false, error: err.message });
       }
     });
