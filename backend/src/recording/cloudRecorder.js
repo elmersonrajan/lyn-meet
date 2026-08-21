@@ -318,11 +318,6 @@ class CloudRecorder {
       const hasScreen = fileSize(this.screenPath) > 2000;
       const useScreen = hasScreen && this.room.stageMode === "screen";
 
-      const pip =
-        `[cam]scale=${PIP_W}:${PIP_H}:force_original_aspect_ratio=decrease,` +
-        `pad=${PIP_W}:${PIP_H}:(ow-iw)/2:(oh-ih)/2,setsar=1[pip];` +
-        `[bg][pip]overlay=W-w-24:H-h-24:eof_action=pass[v]`;
-
       const bgScale =
         `scale=${LAYOUT_W}:${LAYOUT_H}:force_original_aspect_ratio=decrease,` +
         `pad=${LAYOUT_W}:${LAYOUT_H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[bg]`;
@@ -340,14 +335,17 @@ class CloudRecorder {
       if (hasCam) {
         args.push(
           "-filter_complex",
-          `[0:v]${bgScale};[1:v]${pip}`,
+          `[0:v]${bgScale};` +
+            `[1:v]scale=${PIP_W}:${PIP_H}:force_original_aspect_ratio=decrease,` +
+            `pad=${PIP_W}:${PIP_H}:(ow-iw)/2:(oh-ih)/2,setsar=1[pip];` +
+            `[bg][pip]overlay=W-w-24:H-h-24:eof_action=pass[v]`,
           "-map",
           "[v]",
           "-map",
           "1:a?",
         );
       } else {
-        args.push("-filter_complex", `[0:v]${bgScale}`, "-map", "[v]");
+        args.push("-filter_complex", `[0:v]${bgScale}`, "-map", "[bg]");
       }
 
       args.push(
