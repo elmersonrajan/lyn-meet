@@ -2,6 +2,12 @@ import React, { useState } from "react";
 import { useUser } from "../context/UserContext.jsx";
 import { getSocket, emitAck } from "../services/socket.js";
 
+const ROLES = [
+  { id: "student", label: "Student" },
+  { id: "teacher", label: "Teacher" },
+  { id: "coordinator", label: "Coordinator" },
+];
+
 export default function MeetingLobby({ onJoined, onJoinPayload }) {
   const { session, setSession } = useUser();
   const [name, setName] = useState(session.name || "");
@@ -15,17 +21,7 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
     try {
       setError("");
       setBusy(true);
-      console.log("[Lobby] join clicked", {
-        name,
-        meetingId,
-        role,
-        href: window.location.href,
-        secure: window.isSecureContext,
-        media: Boolean(navigator.mediaDevices),
-      });
-      if (!window.isSecureContext || !navigator.mediaDevices) {
-        throw new Error("Open https://59.96.57.40:5173/ — camera needs HTTPS.");
-      }
+      console.log("[Lobby] join clicked", { name, meetingId, role });
       const socket = getSocket();
       if (!socket.connected) socket.connect();
 
@@ -62,7 +58,7 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
     <div className="lobby">
       <form className="lobby-card" onSubmit={join}>
         <h1>Classroom Meet</h1>
-        <p className="lead">Enter your name and meeting ID, then join as teacher or student.</p>
+        <p className="lead">Anyone can join first. Students can speak. Coordinator can remove people.</p>
         {error ? <div className="error-banner">{error}</div> : null}
         <div className="field">
           <label htmlFor="name">Name</label>
@@ -84,21 +80,17 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
             required
           />
         </div>
-        <div className="role-row">
-          <button
-            type="button"
-            className={`role-btn ${role === "teacher" ? "active" : ""}`}
-            onClick={() => setRole("teacher")}
-          >
-            Teacher
-          </button>
-          <button
-            type="button"
-            className={`role-btn ${role === "student" ? "active" : ""}`}
-            onClick={() => setRole("student")}
-          >
-            Student
-          </button>
+        <div className="role-row three">
+          {ROLES.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              className={`role-btn ${role === r.id ? "active" : ""}`}
+              onClick={() => setRole(r.id)}
+            >
+              {r.label}
+            </button>
+          ))}
         </div>
         <button className="primary" type="submit" disabled={busy}>
           {busy ? "Joining…" : "Join meeting"}
