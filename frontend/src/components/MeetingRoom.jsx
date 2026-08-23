@@ -9,9 +9,10 @@ import Toolbar from "./Toolbar.jsx";
 import Whiteboard from "./Whiteboard.jsx";
 import ScreenShare from "./ScreenShare.jsx";
 import ChatPanel from "./ChatPanel.jsx";
+import RemoteAudio from "./RemoteAudio.jsx";
 
 export default function MeetingRoom({ socket, joinPayload, onLeft }) {
-  const { session, isTeacher, setSession } = useUser();
+  const { session, isTeacher, isCoordinator, isStaff, setSession } = useUser();
   const [participants, setParticipants] = useState(joinPayload.participants || []);
   const [stageMode, setStageMode] = useState(joinPayload.stageMode || "whiteboard");
   const [messages, setMessages] = useState(joinPayload.chat || []);
@@ -25,6 +26,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   const media = useMediasoup({
     socket,
     role: session.role,
+    peerId: session.peer?.id,
     enabled: true,
   });
 
@@ -38,19 +40,13 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     let cancelled = false;
     (async () => {
       try {
-        console.log("[MeetingRoom] initializing mediasoup");
+        console.log("[MeetingRoom] initializing mediasoup", { role: session.role });
         await media.initDevice({
           routerRtpCapabilities: joinPayload.routerRtpCapabilities,
           iceServers: joinPayload.iceServers,
-          peerId: joinPayload.peer?.id,
         });
-        if (cancelled) return;
-        await media.consumeExisting(joinPayload.producers || []);
-        try {
-          const again = await emitAck("get-producers", {});
-          if (!cancelled) await media.consumeExisting(again.producers || []);
-        } catch (err) {
-          console.error("[MeetingRoom] get-producers retry failed", err);
+        if (!cancelled) {
+          await media.consumeExisting(joinPayload.producers || []);
         }
       } catch (err) {
         console.error("[MeetingRoom] media init failed", err);
@@ -80,20 +76,21 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     const onLeftPeer = (peer) => {
       console.log("[MeetingRoom] peer-left", peer);
       setParticipants((prev) => prev.filter((p) => p.id !== peer.id));
+      if (peer.role === "teacher") setTeacherDisconnected(false);
     };
     const onStage = ({ mode }) => setStageMode(mode);
     const onChat = (msg) => setMessages((prev) => [...prev, msg]);
     const onRecStart = () => {
       setRecording(true);
-      show("Recording started (cam / screen / whiteboard)");
+      show("Cloud recording started");
     };
     const onRecStop = () => {
       setRecording(false);
-      show("Recording saved on server");
+      show("Cloud recording saved on server");
     };
     const onTeacherDown = (payload) => {
       setTeacherDisconnected(true);
-      show(payload.message || "Teacher disconnected — recording continues");
+      show(payload.message || "Teacher disconnected — meeting continues");
     };
     const onTeacherBack = () => {
       setTeacherDisconnected(false);
@@ -104,6 +101,16 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       media.cleanup();
       setSession((s) => ({ ...s, joined: false }));
       onLeft();
+    };
+    const onKicked = ({ reason }) => {
+      show(reason || "Removed from meeting");
+      media.cleanup();
+      setSession((s) => ({ ...s, joined: false }));
+      onLeft();
+    };
+    const onRemoved = ({ peer, by }) => {
+      setParticipants((prev) => prev.filter((p) => p.id !== peer.id));
+      show(`${peer.name} was removed by ${by}`);
     };
 
     socket.on("participants", onParticipants);
@@ -116,6 +123,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     socket.on("teacher-disconnected", onTeacherDown);
     socket.on("peer-reconnected", onTeacherBack);
     socket.on("session-closed", onClosed);
+    socket.on("kicked", onKicked);
+    socket.on("peer-removed", onRemoved);
 
     return () => {
       socket.off("participants", onParticipants);
@@ -128,6 +137,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       socket.off("teacher-disconnected", onTeacherDown);
       socket.off("peer-reconnected", onTeacherBack);
       socket.off("session-closed", onClosed);
+      socket.off("kicked", onKicked);
+      socket.off("peer-removed", onRemoved);
     };
   }, [socket, media, onLeft, setSession]);
 
@@ -150,23 +161,15 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     try {
       if (!isTeacher) return;
       if (recording) {
-        console.log("[MeetingRoom] stop SERVER recording");
         await emitAck("stop-recording", {});
-        setRecording(false);
-        setToast("Server recording stopped — see recordings/ and logs/last-meeting.log");
       } else {
-        console.log("[MeetingRoom] start SERVER recording (Zoom SFU)");
-        const rec = await emitAck("start-recording", {});
-        console.log("[MeetingRoom] server recorder", rec?.recording);
-        setRecording(true);
-        setToast("Recording on SERVER (needs ICE for picture)");
+        await emitAck("start-recording", {});
       }
     } catch (err) {
       console.error("[MeetingRoom] record toggle failed", err);
       setToast(err.message);
     }
   };
-
 
   const onMuteOthers = async () => {
     try {
@@ -183,6 +186,15 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       await emitAck("close-session", {});
     } catch (err) {
       console.error("[MeetingRoom] close session failed", err);
+      setToast(err.message);
+    }
+  };
+
+  const onRemove = async (peerId) => {
+    try {
+      await emitAck("remove-participant", { peerId });
+    } catch (err) {
+      console.error("[MeetingRoom] remove failed", err);
       setToast(err.message);
     }
   };
@@ -218,51 +230,41 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
 
   return (
     <div className="room">
+      <RemoteAudio items={media.remoteAudio} />
       <div className="room-frame">
         <div className="stage-wrap">
-          {recording ? <div className="rec-pill">REC → server .mp4</div> : null}
-          <div className="ice-strip">
-            ICE send: {media.iceState?.send || "new"} | recv: {media.iceState?.recv || "new"}
-          </div>
-          <div className="stage-tools">
-            <button
-              className={stageMode === "draw" ? "active" : ""}
-              disabled={!isTeacher}
-              onClick={() => setStage("draw")}
-            >
-              ✏ Draw
-            </button>
-            <button
-              className={stageMode === "screen" ? "active" : ""}
-              disabled={!isTeacher}
-              onClick={() => setStage("screen")}
-            >
-              🖥 Entire Screen
-            </button>
-            <button
-              className={stageMode === "whiteboard" ? "active" : ""}
-              disabled={!isTeacher}
-              onClick={() => setStage("whiteboard")}
-            >
-              ⬜ Whiteboard
-            </button>
-            <label
-              className={stageMode === "clip" ? "active" : ""}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "8px 12px",
-                cursor: isTeacher ? "pointer" : "not-allowed",
-                opacity: isTeacher ? 1 : 0.45,
-                fontWeight: 600,
-                color: "#163a6b",
-              }}
-            >
-              ▶ Video Clip
-              <input type="file" accept="video/*" hidden disabled={!isTeacher} onChange={pickClip} />
-            </label>
-          </div>
+          {recording ? <div className="rec-pill">REC CLOUD</div> : null}
+          {isTeacher ? (
+            <div className="stage-tools">
+              <button className={stageMode === "draw" ? "active" : ""} onClick={() => setStage("draw")}>
+                ✏ Draw
+              </button>
+              <button className={stageMode === "screen" ? "active" : ""} onClick={() => setStage("screen")}>
+                🖥 Entire Screen
+              </button>
+              <button
+                className={stageMode === "whiteboard" ? "active" : ""}
+                onClick={() => setStage("whiteboard")}
+              >
+                ⬜ Whiteboard
+              </button>
+              <label
+                className={stageMode === "clip" ? "active" : ""}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "8px 12px",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  color: "#163a6b",
+                }}
+              >
+                ▶ Video Clip
+                <input type="file" accept="video/*" hidden onChange={pickClip} />
+              </label>
+            </div>
+          ) : null}
           <div className="stage-canvas">
             {stageMode === "screen" && media.screenStream ? (
               <ScreenShare stream={media.screenStream} />
@@ -276,17 +278,22 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         <aside className="side">
           <InstructorVideo
             stream={isTeacher ? media.localStream : media.teacherStream}
-            playAudio={!isTeacher}
-            iceState={isTeacher ? media.iceState.send : media.iceState.recv}
             name={teacherName}
             disconnected={teacherDisconnected}
+            muted={isTeacher}
           />
-          <Participants list={participants} />
+          <Participants
+            list={participants}
+            canRemove={isStaff}
+            selfId={session.peer?.id}
+            onRemove={onRemove}
+          />
         </aside>
       </div>
 
       <Toolbar
         isTeacher={isTeacher}
+        isCoordinator={isCoordinator}
         camOn={media.camOn}
         micOn={media.micOn}
         recording={recording}
