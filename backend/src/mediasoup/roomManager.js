@@ -7,17 +7,25 @@ const log = createLogger("RoomManager");
 
 const TEACHER_GRACE_MS = Number(process.env.TEACHER_RECONNECT_GRACE_MS || 120000);
 
+const ROLES = new Set(["teacher", "student", "coordinator"]);
+
+function normalizeRole(role) {
+  const r = String(role || "student").toLowerCase();
+  if (r === "co-ordinator" || r === "co_ordinator" || r === "admin") return "coordinator";
+  return ROLES.has(r) ? r : "student";
+}
+
 class Peer {
   constructor({ id, socketId, name, role }) {
     this.id = id;
     this.socketId = socketId;
     this.name = name;
-    this.role = role;
+    this.role = normalizeRole(role);
     this.transports = new Map();
     this.producers = new Map();
     this.consumers = new Map();
     this.audioMuted = false;
-    this.videoOff = role !== "teacher";
+    this.videoOff = this.role !== "teacher";
     this.disconnected = false;
     this.joinedAt = Date.now();
   }
@@ -50,6 +58,10 @@ class Room {
 
   getTeacher() {
     return [...this.peers.values()].find((p) => p.role === "teacher") || null;
+  }
+
+  getStaff() {
+    return [...this.peers.values()].filter((p) => p.role === "teacher" || p.role === "coordinator");
   }
 
   participants() {
@@ -89,50 +101,17 @@ class Room {
 
       transport.on("dtlsstatechange", (state) => {
         log.info("dtlsstatechange", { transportId: transport.id, state, peerId: peer.id });
-      });
-      transport.on("icestatechange", (state) => {
-        log.info("icestatechange", {
-          transportId: transport.id,
-          state,
-          peerId: peer.id,
-          role: peer.role,
-        });
-        if (state === "connected") {
-          log.info("ICE CONNECTED — media path is open", {
-            peerId: peer.id,
-            role: peer.role,
-            transportId: transport.id,
-          });
+        if (state === "closed" || state === "failed") {
+          transport.close();
         }
-        if (state === "failed" || state === "disconnected") {
-          log.error("ICE FAILED on server — UDP/TCP 40000-49000 not reaching this host 1:1", {
-            peerId: peer.id,
-            role: peer.role,
-            transportId: transport.id,
-            state,
-            candidates: transport.iceCandidates,
-          });
-        }
-      });
-      transport.on("iceselectedtuplechange", (tuple) => {
-        log.info("ICE selected tuple (WORKING PATH)", {
-          peerId: peer.id,
-          transportId: transport.id,
-          tuple,
-        });
       });
 
-      const params = {
+      return {
         id: transport.id,
         iceParameters: transport.iceParameters,
         iceCandidates: transport.iceCandidates,
         dtlsParameters: transport.dtlsParameters,
       };
-      log.info("transport ICE candidates", {
-        peerId: peer.id,
-        candidates: params.iceCandidates,
-      });
-      return params;
     } catch (err) {
       log.error("createWebRtcTransport failed", err);
       throw err;
@@ -153,10 +132,13 @@ class Room {
 
   async produce(peer, { transportId, kind, rtpParameters, source }) {
     try {
-      if (peer.role !== "teacher" && (source === "video" || source === "screen")) {
+      if (peer.role === "coordinator" && (source === "video" || source === "screen")) {
+        throw new Error("Coordinator has no camera or screen share");
+      }
+      if (peer.role === "student" && (source === "video" || source === "screen")) {
         throw new Error("Students cannot produce video or screen share");
       }
-      log.action("produce", { peerId: peer.id, kind, source });
+      log.action("produce", { peerId: peer.id, kind, source, role: peer.role });
       const transport = peer.transports.get(transportId);
       if (!transport) throw new Error("Transport not found");
 
@@ -245,7 +227,7 @@ class Room {
   async resumeProducer(peer, source) {
     try {
       if (peer.role !== "teacher" && source === "video") {
-        throw new Error("Students cannot enable camera");
+        throw new Error("Only the teacher can enable camera");
       }
       const producer = this.findProducer(peer.id, source);
       if (!producer) return;
@@ -361,7 +343,7 @@ function removePeerFromRoom(room, peer, { force = false } = {}) {
         try {
           const current = room.peers.get(peer.id);
           if (current && current.disconnected) {
-            log.warn("teacher grace expired — closing teacher media", { peerId: peer.id });
+            log.warn("teacher grace expired — removing teacher, room stays", { peerId: peer.id });
             room.closePeerMedia(current);
             room.peers.delete(peer.id);
           }
@@ -369,7 +351,7 @@ function removePeerFromRoom(room, peer, { force = false } = {}) {
           log.error("teacher grace cleanup failed", err);
         }
       }, TEACHER_GRACE_MS);
-      log.info("teacher marked disconnected; room + recording stay alive", {
+      log.info("teacher marked disconnected; room stays alive", {
         roomId: room.id,
         graceMs: TEACHER_GRACE_MS,
         recording: Boolean(room.recorder && room.recorder.active),
@@ -419,4 +401,5 @@ module.exports = {
   removePeerFromRoom,
   closeRoom,
   TEACHER_GRACE_MS,
+  normalizeRole,
 };
