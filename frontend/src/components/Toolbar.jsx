@@ -2,6 +2,7 @@ import React from "react";
 
 export default function Toolbar({
   isTeacher,
+  isCoordinator,
   camOn,
   micOn,
   recording,
@@ -14,36 +15,49 @@ export default function Toolbar({
   onPostMsg,
   onLeave,
 }) {
+  const staff = isTeacher || isCoordinator;
   return (
     <div className="toolbar">
-      <button className="tbtn" disabled={!isTeacher} onClick={onToggleCam} title="Students cannot enable camera">
-        <span className="ico">{camOn && isTeacher ? "📹" : "🚫"}</span>
-        Video Off
-      </button>
-      <button className="tbtn" disabled={!isTeacher} onClick={onToggleCam}>
-        <span className="ico">⏸</span>
-        Pause Video
-      </button>
+      {isTeacher ? (
+        <>
+          <button className="tbtn" onClick={onToggleCam}>
+            <span className="ico">{camOn ? "📹" : "🚫"}</span>
+            {camOn ? "Video On" : "Video Off"}
+          </button>
+          <button className="tbtn" onClick={onToggleCam}>
+            <span className="ico">⏸</span>
+            Pause Video
+          </button>
+        </>
+      ) : null}
+
       <button className="tbtn" onClick={onToggleMic}>
         <span className="ico">{micOn ? "🎤" : "🔇"}</span>
-        Mute Mic
+        {micOn ? "Mute Mic" : "Unmute Mic"}
       </button>
-      <button className="tbtn" disabled={!isTeacher} onClick={onMuteOthers}>
-        <span className="ico">👥</span>
-        Mute Others
-      </button>
-      <button
-        className={`tbtn ${recording ? "live" : ""}`}
-        disabled={!isTeacher}
-        onClick={onToggleRecord}
-      >
-        <span className="ico" style={{ color: "#d32f2f" }}>●</span>
-        {recording ? "Stop Record" : "Start Record"}
-      </button>
-      <button className="tbtn" disabled={!isTeacher} onClick={onCloseSession}>
-        <span className="ico">⎋</span>
-        Close Session
-      </button>
+
+      {staff ? (
+        <>
+          <button className="tbtn" onClick={onMuteOthers}>
+            <span className="ico">👥</span>
+            Mute Others
+          </button>
+          <button className="tbtn" onClick={onCloseSession}>
+            <span className="ico">⎋</span>
+            Close Session
+          </button>
+        </>
+      ) : null}
+
+      {isTeacher ? (
+        <button className={`tbtn ${recording ? "live" : ""}`} onClick={onToggleRecord}>
+          <span className="ico" style={{ color: "#d32f2f" }}>
+            ●
+          </span>
+          {recording ? "Stop Record" : "Start Record"}
+        </button>
+      ) : null}
+
       <button className="tbtn" onClick={onPostQa}>
         <span className="ico">❓</span>
         Post a QA
