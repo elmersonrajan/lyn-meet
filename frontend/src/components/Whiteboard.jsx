@@ -11,7 +11,7 @@ export default function Whiteboard({ board }) {
       onTouchStart={board.onDown}
       onTouchMove={board.onMove}
       onTouchEnd={board.onUp}
-      style={{ cursor: "crosshair" }}
+      style={{ cursor: "crosshair", width: "100%", height: "100%", display: "block", touchAction: "none" }}
     />
   );
 }
