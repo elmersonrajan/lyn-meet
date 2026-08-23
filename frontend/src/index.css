@@ -12,19 +12,26 @@
 }
 
 * { box-sizing: border-box; }
-html, body, #root { height: 100%; margin: 0; }
+html, body, #root {
+  height: 100%;
+  height: 100dvh;
+  margin: 0;
+  overflow: hidden;
+}
 body { background: #e8eef6; color: #122033; }
 
 button { font: inherit; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.app-shell { min-height: 100%; }
+.app-shell { height: 100%; min-height: 0; }
 
 .lobby {
   min-height: 100%;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 16px;
+  overflow: auto;
   background:
     radial-gradient(circle at 10% 10%, #d7e6ff 0, transparent 40%),
     radial-gradient(circle at 90% 90%, #cfe0f8 0, transparent 35%),
@@ -43,7 +50,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .lobby-card h1 {
   margin: 0 0 6px;
   color: var(--navy);
-  font-size: 26px;
+  font-size: clamp(22px, 5vw, 26px);
 }
 
 .lobby-card p.lead {
@@ -60,6 +67,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   border-radius: 8px;
   padding: 0 12px;
   outline: none;
+  font-size: 16px;
 }
 .field input:focus { border-color: var(--navy); box-shadow: 0 0 0 3px rgba(22, 58, 107, 0.12); }
 
@@ -69,10 +77,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   border: 1px solid #b7c7de;
   background: #f6f9fd;
   border-radius: 10px;
-  padding: 12px 8px;
+  padding: 12px 6px;
   cursor: pointer;
   color: var(--navy);
   font-weight: 600;
+  font-size: clamp(12px, 3vw, 14px);
 }
 .role-btn.active {
   background: var(--navy);
@@ -103,17 +112,20 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .room {
   height: 100%;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   padding: 10px;
   gap: 10px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .room-frame {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1fr 280px;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 28vw);
   gap: 0;
   border: 2px solid var(--line);
   border-radius: 10px;
@@ -124,9 +136,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .stage-wrap {
   position: relative;
   min-width: 0;
+  min-height: 0;
   background: #fff;
   display: flex;
   flex-direction: column;
+  height: 100%;
 }
 
 .stage-tools {
@@ -135,13 +149,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   right: 10px;
   z-index: 3;
   display: flex;
+  flex-wrap: wrap;
+  max-width: calc(100% - 20px);
   border: 2px solid var(--line);
   border-radius: 8px;
   background: #fff;
   overflow: hidden;
 }
 
-.stage-tools button {
+.stage-tools button,
+.stage-tools label {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -153,23 +170,31 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
 }
 .stage-tools button:last-child { border-right: 0; }
-.stage-tools button.active { background: #e8f0fb; }
+.stage-tools button.active,
+.stage-tools label.active { background: #e8f0fb; }
 
 .stage-canvas {
   flex: 1;
   min-height: 0;
   position: relative;
+  width: 100%;
+  height: 100%;
 }
 
 .stage-canvas canvas,
 .stage-canvas video.screen,
 .stage-canvas video.clip {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
+  display: block;
   object-fit: contain;
   background: #fff;
+  touch-action: none;
 }
 
 .side {
@@ -177,7 +202,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   background: #fff;
+  overflow: hidden;
 }
 
 .side-head {
@@ -188,20 +215,26 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   padding: 8px 12px;
 }
 
+.instructor-wrap { min-width: 0; }
+
 .instructor {
   background: #0e3a2a;
-  min-height: 170px;
   position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 32vh;
+  min-height: 120px;
 }
 .instructor video {
   width: 100%;
-  height: 180px;
+  height: 100%;
   object-fit: cover;
   background: #123;
   display: block;
 }
 .instructor .empty {
-  height: 180px;
+  position: absolute;
+  inset: 0;
   display: grid;
   place-items: center;
   color: #cfe8d8;
@@ -210,7 +243,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   padding: 12px;
 }
 
-.plist { flex: 1; overflow: auto; }
+.plist { flex: 1; overflow: auto; min-height: 0; }
 .prow {
   display: flex;
   align-items: center;
@@ -228,6 +261,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   display: grid;
   place-items: center;
   font-size: 14px;
+  flex-shrink: 0;
 }
 .kick-btn {
   border: 1px solid #d32f2f;
@@ -248,6 +282,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   border-radius: 10px;
   padding: 8px;
   background: #fff;
+  flex-shrink: 0;
 }
 
 .tbtn {
@@ -281,6 +316,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   border-radius: 8px;
   font-size: 13px;
   z-index: 20;
+  max-width: calc(100vw - 24px);
 }
 
 .chat-dock {
@@ -294,7 +330,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
-  max-height: 420px;
+  max-height: min(420px, 50vh);
   z-index: 15;
 }
 .chat-dock header {
@@ -310,7 +346,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .msg .meta { color: var(--muted); font-size: 11px; }
 .msg.qa { background: #fff8e8; border-radius: 6px; padding: 6px; }
 .chat-form { display: flex; gap: 6px; padding: 8px; border-top: 1px solid #dbe4f0; }
-.chat-form input { flex: 1; height: 36px; border: 1px solid #b7c7de; border-radius: 6px; padding: 0 8px; }
+.chat-form input { flex: 1; height: 36px; border: 1px solid #b7c7de; border-radius: 6px; padding: 0 8px; font-size: 16px; }
 .chat-form button { border: 0; background: var(--navy); color: #fff; border-radius: 6px; padding: 0 12px; cursor: pointer; }
 
 .rec-pill {
@@ -326,8 +362,100 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   font-weight: 700;
 }
 
-@media (max-width: 860px) {
-  .room-frame { grid-template-columns: 1fr; }
-  .side { border-left: 0; border-top: 2px solid var(--line); max-height: 280px; }
-  .stage-tools { position: static; flex-wrap: wrap; }
+/* Tablet */
+@media (max-width: 1024px) {
+  .room { padding: 6px; gap: 6px; }
+  .room-frame {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .stage-wrap { min-height: 46vh; }
+  .stage-canvas { min-height: 42vh; }
+  .stage-tools {
+    position: static;
+    max-width: none;
+    border-left: 0;
+    border-right: 0;
+    border-top: 0;
+    border-radius: 0;
+  }
+  .side {
+    border-left: 0;
+    border-top: 2px solid var(--line);
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    max-height: 34vh;
+  }
+  .instructor {
+    max-height: 34vh;
+    min-height: 110px;
+    aspect-ratio: 16 / 9;
+  }
+  .tbtn {
+    min-width: 72px;
+    height: 56px;
+    font-size: 11px;
+  }
+}
+
+/* Phone */
+@media (max-width: 640px) {
+  .lobby { padding: 12px; }
+  .lobby-card { padding: 20px 16px 18px; border-radius: 12px; }
+  .role-row.three { grid-template-columns: 1fr; }
+  .room { padding: 4px; gap: 4px; }
+  .room-frame { border-width: 1px; border-radius: 8px; }
+  .stage-wrap { min-height: 40vh; }
+  .stage-canvas { min-height: 38vh; }
+  .stage-tools button,
+  .stage-tools label {
+    padding: 8px 8px;
+    font-size: 11px;
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+  .side {
+    grid-template-columns: 1fr;
+    max-height: 42vh;
+  }
+  .instructor {
+    max-height: 28vh;
+    min-height: 140px;
+    aspect-ratio: 16 / 9;
+  }
+  .plist { max-height: 18vh; }
+  .toolbar {
+    padding: 6px;
+    gap: 6px;
+    justify-content: center;
+  }
+  .tbtn {
+    min-width: calc(25% - 8px);
+    flex: 1 1 72px;
+    height: 52px;
+    font-size: 10px;
+  }
+  .chat-dock {
+    right: 8px;
+    left: 8px;
+    width: auto;
+    bottom: 78px;
+  }
+}
+
+@media (max-width: 640px) and (orientation: landscape) {
+  .room-frame {
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 34vw);
+    grid-template-rows: 1fr;
+  }
+  .stage-wrap { min-height: 0; }
+  .stage-canvas { min-height: 0; }
+  .side {
+    border-top: 0;
+    border-left: 2px solid var(--line);
+    grid-template-columns: 1fr;
+    max-height: none;
+  }
+  .instructor { max-height: 36vh; min-height: 90px; }
+  .plist { max-height: none; }
 }
