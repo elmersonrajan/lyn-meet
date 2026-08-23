@@ -16,6 +16,9 @@ export function UserProvider({ children }) {
       session,
       setSession,
       isTeacher: session.role === "teacher",
+      isCoordinator: session.role === "coordinator",
+      isStaff: session.role === "teacher" || session.role === "coordinator",
+      isStudent: session.role === "student",
     }),
     [session],
   );
