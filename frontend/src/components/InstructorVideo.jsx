@@ -8,6 +8,8 @@ export default function InstructorVideo({ stream, name, disconnected, muted }) {
       if (ref.current) {
         ref.current.srcObject = stream || null;
         ref.current.muted = Boolean(muted);
+        const play = () => ref.current?.play().catch((err) => console.warn("[InstructorVideo] play", err));
+        play();
       }
     } catch (err) {
       console.error("[InstructorVideo] attach failed", err);
@@ -15,7 +17,7 @@ export default function InstructorVideo({ stream, name, disconnected, muted }) {
   }, [stream, muted]);
 
   return (
-    <div>
+    <div className="instructor-wrap">
       <div className="side-head">Instructor Video</div>
       <div className="instructor">
         {stream ? (
