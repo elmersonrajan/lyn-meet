@@ -64,6 +64,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .field input:focus { border-color: var(--navy); box-shadow: 0 0 0 3px rgba(22, 58, 107, 0.12); }
 
 .role-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+.role-row.three { grid-template-columns: 1fr 1fr 1fr; }
 .role-btn {
   border: 1px solid #b7c7de;
   background: #f6f9fd;
@@ -228,6 +229,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   place-items: center;
   font-size: 14px;
 }
+.kick-btn {
+  border: 1px solid #d32f2f;
+  background: #fff;
+  color: #d32f2f;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 6px;
+  cursor: pointer;
+}
 
 .toolbar {
   display: flex;
@@ -319,17 +330,4 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   .room-frame { grid-template-columns: 1fr; }
   .side { border-left: 0; border-top: 2px solid var(--line); max-height: 280px; }
   .stage-tools { position: static; flex-wrap: wrap; }
-}
-
-.ice-strip {
-  position: absolute;
-  right: 12px;
-  top: 10px;
-  font-size: 11px;
-  background: #0f2a4d;
-  color: #d7e6ff;
-  padding: 4px 8px;
-  border-radius: 6px;
-  z-index: 3;
-  font-family: ui-monospace, monospace;
 }
