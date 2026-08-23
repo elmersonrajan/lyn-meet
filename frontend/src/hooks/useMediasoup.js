@@ -2,94 +2,100 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as mediasoupClient from "mediasoup-client";
 import { emitAck } from "../services/socket";
 
-export function useMediasoup({ socket, role, enabled }) {
+export function useMediasoup({ socket, role, peerId, enabled }) {
   const deviceRef = useRef(null);
   const sendTransportRef = useRef(null);
   const recvTransportRef = useRef(null);
   const producersRef = useRef({});
-  const consumedRef = useRef(new Set());
-  const pendingRef = useRef([]);
-  const startingRef = useRef(false);
-  const myPeerIdRef = useRef(null);
-  const iceServersRef = useRef([]);
-
-  const teacherMsRef = useRef(new MediaStream());
-  const screenMsRef = useRef(new MediaStream());
+  const consumersRef = useRef(new Map());
+  const peerIdRef = useRef(peerId);
 
   const [localStream, setLocalStream] = useState(null);
   const [teacherStream, setTeacherStream] = useState(null);
   const [screenStream, setScreenStream] = useState(null);
+  const [remoteAudio, setRemoteAudio] = useState([]);
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(role === "teacher");
   const [sharing, setSharing] = useState(false);
   const [ready, setReady] = useState(false);
-  const [iceState, setIceState] = useState({ send: "new", recv: "new" });
 
-  const bumpTeacher = () => {
-    try {
-      setTeacherStream(new MediaStream(teacherMsRef.current.getTracks()));
-    } catch (err) {
-      console.error("[Mediasoup] bumpTeacher failed", err);
-    }
-  };
-  const bumpScreen = () => {
-    try {
-      setScreenStream(new MediaStream(screenMsRef.current.getTracks()));
-    } catch (err) {
-      console.error("[Mediasoup] bumpScreen failed", err);
-    }
-  };
+  const teacherStreamRef = useRef(new MediaStream());
+  const screenStreamRef = useRef(new MediaStream());
+  const remoteAudioRef = useRef(new Map());
 
-  const attachRemoteTrack = useCallback((track, source) => {
-    try {
-      console.log("[Mediasoup] attachRemoteTrack", source, track.kind, track.id, track.readyState);
-      const bucket = source === "screen" ? screenMsRef : teacherMsRef;
-      bucket.current.getTracks().forEach((t) => {
-        if (t.kind === track.kind) bucket.current.removeTrack(t);
-      });
-      bucket.current.addTrack(track);
-      if (source === "screen") bumpScreen();
-      else bumpTeacher();
-    } catch (err) {
-      console.error("[Mediasoup] attachRemoteTrack failed", err);
-    }
+  useEffect(() => {
+    peerIdRef.current = peerId;
+  }, [peerId]);
+
+  const publishRemoteAudio = useCallback(() => {
+    setRemoteAudio(
+      [...remoteAudioRef.current.entries()].map(([id, stream]) => ({ id, stream })),
+    );
   }, []);
+
+  const attachRemoteTrack = useCallback(
+    (track, source, producer) => {
+      try {
+        console.log("[Mediasoup] attachRemoteTrack", source, track.kind, producer?.role, producer?.peerId);
+        if (source === "screen") {
+          screenStreamRef.current.addTrack(track);
+          setScreenStream(new MediaStream(screenStreamRef.current.getTracks()));
+          return;
+        }
+        if (track.kind === "video") {
+          teacherStreamRef.current.addTrack(track);
+          setTeacherStream(new MediaStream(teacherStreamRef.current.getTracks()));
+          return;
+        }
+        if (track.kind === "audio") {
+          if (producer?.role === "teacher") {
+            teacherStreamRef.current.addTrack(track);
+            setTeacherStream(new MediaStream(teacherStreamRef.current.getTracks()));
+            return;
+          }
+          const stream = new MediaStream([track]);
+          remoteAudioRef.current.set(producer.producerId, stream);
+          publishRemoteAudio();
+        }
+      } catch (err) {
+        console.error("[Mediasoup] attachRemoteTrack failed", err);
+      }
+    },
+    [publishRemoteAudio],
+  );
 
   const consumeProducer = useCallback(
     async (producer) => {
       try {
-        if (!producer || !producer.producerId) return;
-        if (!deviceRef.current || !recvTransportRef.current) {
-          pendingRef.current.push(producer);
-          console.log("[Mediasoup] queued consume", producer);
-          return;
-        }
-        if (myPeerIdRef.current && producer.peerId === myPeerIdRef.current) {
+        if (!deviceRef.current || !recvTransportRef.current) return;
+        if (!producer) return;
+        if (producer.peerId && producer.peerId === peerIdRef.current) {
           console.log("[Mediasoup] skip own producer", producer);
           return;
         }
-        if (producer.role === "student") {
-          console.log("[Mediasoup] skip student producer (cam/audio first = teacher only)", producer);
-          return;
+        if (producer.source === "video" || producer.source === "screen") {
+          if (producer.role !== "teacher") {
+            console.log("[Mediasoup] skip non-teacher video/screen", producer);
+            return;
+          }
         }
-        if (consumedRef.current.has(producer.producerId)) return;
-        consumedRef.current.add(producer.producerId);
         console.log("[Mediasoup] consumeProducer", producer);
         const res = await emitAck("consume", {
           producerId: producer.producerId,
           transportId: recvTransportRef.current.id,
           rtpCapabilities: deviceRef.current.rtpCapabilities,
         });
+        const { params } = res;
         const consumer = await recvTransportRef.current.consume({
-          id: res.params.id,
-          producerId: res.params.producerId,
-          kind: res.params.kind,
-          rtpParameters: res.params.rtpParameters,
+          id: params.id,
+          producerId: params.producerId,
+          kind: params.kind,
+          rtpParameters: params.rtpParameters,
         });
-        attachRemoteTrack(consumer.track, producer.source || res.params.kind);
+        consumersRef.current.set(consumer.id, consumer);
+        attachRemoteTrack(consumer.track, producer.source, producer);
         await emitAck("resume-consumer", { consumerId: consumer.id });
       } catch (err) {
-        consumedRef.current.delete(producer.producerId);
         console.error("[Mediasoup] consumeProducer failed", err);
       }
     },
@@ -98,40 +104,33 @@ export function useMediasoup({ socket, role, enabled }) {
 
   const startLocalMedia = useCallback(async () => {
     try {
-      const md = navigator.mediaDevices;
-      if (!md || typeof md.getUserMedia !== "function") {
-        throw new Error(
-          "Camera/mic blocked. Open https://59.96.57.40:5173/ (HTTPS required).",
-        );
-      }
-      const constraints =
-        role === "teacher"
-          ? { audio: true, video: { width: { ideal: 1280 }, height: { ideal: 720 } } }
-          : { audio: true, video: false };
-      console.log("[Mediasoup] getUserMedia", constraints);
-      const stream = await md.getUserMedia(constraints);
+      const wantCam = role === "teacher";
+      const constraints = wantCam
+        ? { audio: true, video: { width: 1280, height: 720 } }
+        : { audio: true, video: false };
+      console.log("[Mediasoup] getUserMedia", constraints, { role });
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       setLocalStream(stream);
+      if (role === "teacher") setTeacherStream(stream);
 
       const audioTrack = stream.getAudioTracks()[0];
-      if (audioTrack && sendTransportRef.current && !producersRef.current.audio) {
-        producersRef.current.audio = await sendTransportRef.current.produce({
+      if (audioTrack && sendTransportRef.current) {
+        const producer = await sendTransportRef.current.produce({
           track: audioTrack,
-          encodings: [{ maxBitrate: 64000 }],
           appData: { source: "audio" },
         });
-        console.log("[Mediasoup] audio producer created");
+        producersRef.current.audio = producer;
+        console.log("[Mediasoup] audio producer created", { role });
       }
 
       const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack && role === "teacher" && sendTransportRef.current && !producersRef.current.video) {
-        producersRef.current.video = await sendTransportRef.current.produce({
+      if (videoTrack && role === "teacher" && sendTransportRef.current) {
+        const producer = await sendTransportRef.current.produce({
           track: videoTrack,
-          encodings: [{ maxBitrate: 800000 }],
-          codecOptions: { videoGoogleStartBitrate: 400 },
           appData: { source: "video" },
         });
+        producersRef.current.video = producer;
         setCamOn(true);
-        console.log("[Mediasoup] video producer created");
       }
     } catch (err) {
       console.error("[Mediasoup] startLocalMedia failed", err);
@@ -140,44 +139,19 @@ export function useMediasoup({ socket, role, enabled }) {
   }, [role]);
 
   const initDevice = useCallback(
-    async ({ routerRtpCapabilities, iceServers, peerId }) => {
+    async ({ routerRtpCapabilities, iceServers }) => {
       try {
-        if (startingRef.current || deviceRef.current) {
-          console.log("[Mediasoup] initDevice already running/done");
-          return;
-        }
-        startingRef.current = true;
-        if (peerId) myPeerIdRef.current = peerId;
-        iceServersRef.current = iceServers || [];
-        console.log("[Mediasoup] initDevice", {
-          peerId,
-          iceServers: iceServersRef.current,
-          secure: window.isSecureContext,
-          hasMedia: Boolean(navigator.mediaDevices),
-        });
-
+        console.log("[Mediasoup] initDevice", { role, peerId: peerIdRef.current });
         const device = new mediasoupClient.Device();
         await device.load({ routerRtpCapabilities });
         deviceRef.current = device;
 
         const makeTransport = async (direction) => {
           const { params } = await emitAck("create-transport", { direction });
-          console.log("[Mediasoup] transport params", direction, {
-            id: params.id,
-            iceCandidates: params.iceCandidates,
-          });
           const transport =
             direction === "send"
-              ? device.createSendTransport({
-                  ...params,
-                  iceServers: iceServersRef.current,
-                  iceTransportPolicy: "all",
-                })
-              : device.createRecvTransport({
-                  ...params,
-                  iceServers: iceServersRef.current,
-                  iceTransportPolicy: "all",
-                });
+              ? device.createSendTransport({ ...params, iceServers })
+              : device.createRecvTransport({ ...params, iceServers });
 
           transport.on("connect", async ({ dtlsParameters }, callback, errback) => {
             try {
@@ -213,15 +187,6 @@ export function useMediasoup({ socket, role, enabled }) {
 
           transport.on("connectionstatechange", (state) => {
             console.log("[Mediasoup] transport state", direction, state);
-            setIceState((s) => ({ ...s, [direction]: state }));
-            if (state === "failed") {
-              console.error(
-                "[Mediasoup] ICE failed. Office router must forward UDP/TCP 40000-49999 and 3478 to this server.",
-              );
-            }
-          });
-          transport.on("icegatheringstatechange", (state) => {
-            console.log("[Mediasoup] ICE gathering", direction, state);
           });
 
           return transport;
@@ -231,16 +196,12 @@ export function useMediasoup({ socket, role, enabled }) {
         recvTransportRef.current = await makeTransport("recv");
         setReady(true);
         await startLocalMedia();
-        for (const p of pendingRef.current.splice(0)) {
-          await consumeProducer(p);
-        }
       } catch (err) {
-        startingRef.current = false;
         console.error("[Mediasoup] initDevice failed", err);
         throw err;
       }
     },
-    [startLocalMedia, consumeProducer],
+    [startLocalMedia, role],
   );
 
   useEffect(() => {
@@ -252,11 +213,14 @@ export function useMediasoup({ socket, role, enabled }) {
     };
     const onClosed = ({ producerId, source }) => {
       console.log("[Mediasoup] producer-closed", producerId, source);
-      consumedRef.current.delete(producerId);
       if (source === "screen") {
-        screenMsRef.current = new MediaStream();
+        screenStreamRef.current = new MediaStream();
         setScreenStream(null);
         setSharing(false);
+      }
+      if (remoteAudioRef.current.has(producerId)) {
+        remoteAudioRef.current.delete(producerId);
+        publishRemoteAudio();
       }
     };
 
@@ -264,6 +228,8 @@ export function useMediasoup({ socket, role, enabled }) {
     socket.on("producer-closed", onClosed);
     socket.on("force-mute", async () => {
       try {
+        if (role !== "student") return;
+        console.log("[Mediasoup] force-mute received");
         await emitAck("pause-producer", { source: "audio" });
         localStream?.getAudioTracks().forEach((t) => {
           t.enabled = false;
@@ -279,7 +245,7 @@ export function useMediasoup({ socket, role, enabled }) {
       socket.off("producer-closed", onClosed);
       socket.off("force-mute");
     };
-  }, [socket, enabled, consumeProducer, localStream]);
+  }, [socket, enabled, consumeProducer, localStream, role, publishRemoteAudio]);
 
   const consumeExisting = useCallback(
     async (producers = []) => {
@@ -298,6 +264,7 @@ export function useMediasoup({ socket, role, enabled }) {
   const toggleMic = useCallback(async () => {
     try {
       const next = !micOn;
+      console.log("[Mediasoup] toggleMic", next, { role });
       localStream?.getAudioTracks().forEach((t) => {
         t.enabled = next;
       });
@@ -306,12 +273,16 @@ export function useMediasoup({ socket, role, enabled }) {
     } catch (err) {
       console.error("[Mediasoup] toggleMic failed", err);
     }
-  }, [micOn, localStream]);
+  }, [micOn, localStream, role]);
 
   const toggleCam = useCallback(async () => {
     try {
-      if (role !== "teacher") return;
+      if (role !== "teacher") {
+        console.warn("[Mediasoup] only teacher can toggle camera");
+        return;
+      }
       const next = !camOn;
+      console.log("[Mediasoup] toggleCam", next);
       localStream?.getVideoTracks().forEach((t) => {
         t.enabled = next;
       });
@@ -325,7 +296,11 @@ export function useMediasoup({ socket, role, enabled }) {
   const startScreen = useCallback(async () => {
     try {
       if (role !== "teacher") throw new Error("Only teacher can share screen");
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      console.log("[Mediasoup] startScreen");
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: false,
+      });
       const track = stream.getVideoTracks()[0];
       const producer = await sendTransportRef.current.produce({
         track,
@@ -352,6 +327,7 @@ export function useMediasoup({ socket, role, enabled }) {
 
   const stopScreen = useCallback(async () => {
     try {
+      console.log("[Mediasoup] stopScreen");
       await emitAck("close-producer", { source: "screen" });
       producersRef.current.screen?.close();
       screenStream?.getTracks().forEach((t) => t.stop());
@@ -364,6 +340,7 @@ export function useMediasoup({ socket, role, enabled }) {
 
   const cleanup = useCallback(() => {
     try {
+      console.log("[Mediasoup] cleanup");
       localStream?.getTracks().forEach((t) => t.stop());
       screenStream?.getTracks().forEach((t) => t.stop());
       Object.values(producersRef.current).forEach((p) => {
@@ -375,6 +352,7 @@ export function useMediasoup({ socket, role, enabled }) {
       });
       sendTransportRef.current?.close();
       recvTransportRef.current?.close();
+      remoteAudioRef.current.clear();
     } catch (err) {
       console.error("[Mediasoup] cleanup failed", err);
     }
@@ -391,10 +369,10 @@ export function useMediasoup({ socket, role, enabled }) {
     localStream,
     teacherStream,
     screenStream,
+    remoteAudio,
     micOn,
     camOn,
     sharing,
     ready,
-    iceState,
   };
 }
