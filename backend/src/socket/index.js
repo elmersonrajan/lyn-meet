@@ -6,6 +6,7 @@ const {
   getRoom,
   removePeerFromRoom,
   closeRoom,
+  normalizeRole,
 } = require("../mediasoup/roomManager");
 const { createLogger } = require("../utils/logger");
 const meetingLog = require("../utils/meetingLog");
@@ -35,6 +36,28 @@ function requireTeacher(peer) {
   }
 }
 
+function requireStaff(peer) {
+  if (!peer || (peer.role !== "teacher" && peer.role !== "coordinator")) {
+    throw new Error("Only the teacher or coordinator can perform this action");
+  }
+}
+
+function joinAck(room, peer, extra = {}) {
+  return {
+    ok: true,
+    peer: peer.public(),
+    participants: room.participants(),
+    routerRtpCapabilities: room.router.rtpCapabilities,
+    iceServers: getIceServers(),
+    stageMode: room.stageMode,
+    chat: room.chat,
+    whiteboard: room.whiteboard,
+    recording: room.recorder ? room.recorder.snapshot() : null,
+    producers: room.listProducers(),
+    ...extra,
+  };
+}
+
 function attachSocketHandlers(io) {
   io.on("connection", (socket) => {
     log.info("client connected", { socketId: socket.id });
@@ -45,16 +68,11 @@ function attachSocketHandlers(io) {
       try {
         const name = String(payload?.name || "").trim();
         const meetingId = String(payload?.meetingId || "").trim();
-        const role = payload?.role === "teacher" ? "teacher" : "student";
+        const role = normalizeRole(payload?.role);
         log.action("join-room", { name, meetingId, role, socketId: socket.id });
 
         if (!name || !meetingId) {
           throw new Error("Name and meeting ID are required");
-        }
-
-        const existing = getRoom(meetingId);
-        if (role === "student" && !existing) {
-          throw new Error("Meeting not found. Wait for the teacher to start the session.");
         }
 
         const room = await getOrCreateRoom(meetingId);
@@ -79,28 +97,13 @@ function attachSocketHandlers(io) {
             socket.data.peerId = currentTeacher.id;
             socket.data.roomId = room.id;
             socket.join(room.id);
-
             socket.to(room.id).emit("peer-reconnected", currentTeacher.public());
-
             meetingLog.writeEntry("teacher-reconnect", {
               name,
               meetingId,
               peerId: currentTeacher.id,
             });
-
-            ack(callback, {
-              ok: true,
-              peer: currentTeacher.public(),
-              participants: room.participants(),
-              routerRtpCapabilities: room.router.rtpCapabilities,
-              iceServers: getIceServers(),
-              stageMode: room.stageMode,
-              chat: room.chat,
-              whiteboard: room.whiteboard,
-              recording: room.recorder ? room.recorder.snapshot() : null,
-              producers: room.listProducers(),
-              reconnected: true,
-            });
+            ack(callback, joinAck(room, currentTeacher, { reconnected: true }));
             return;
           }
         }
@@ -124,19 +127,7 @@ function attachSocketHandlers(io) {
           meetingLog.writeEntry("join-room", { name, role, meetingId, peerId: peer.id });
         }
 
-        ack(callback, {
-          ok: true,
-          peer: peer.public(),
-          participants: room.participants(),
-          routerRtpCapabilities: room.router.rtpCapabilities,
-          iceServers: getIceServers(),
-          stageMode: room.stageMode,
-          chat: room.chat,
-          whiteboard: room.whiteboard,
-          recording: room.recorder ? room.recorder.snapshot() : null,
-          producers: room.listProducers(),
-          reconnected: false,
-        });
+        ack(callback, joinAck(room, peer, { reconnected: false }));
       } catch (err) {
         log.error("join-room failed", err);
         meetingLog.writeEntry("join-room-failed", { error: err.message });
@@ -300,10 +291,10 @@ function attachSocketHandlers(io) {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
-        requireTeacher(peer);
-        log.action("mute-others", { roomId: room.id, teacherId: peer.id });
+        requireStaff(peer);
+        log.action("mute-others", { roomId: room.id, by: peer.id, role: peer.role });
         for (const other of room.peers.values()) {
-          if (other.role === "student") {
+          if (other.id !== peer.id && other.role === "student") {
             await room.pauseProducer(other, "audio");
           }
         }
@@ -312,6 +303,44 @@ function attachSocketHandlers(io) {
         ack(callback, { ok: true });
       } catch (err) {
         log.error("mute-others failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    socket.on("remove-participant", async ({ peerId }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        requireStaff(peer);
+        const target = room.peers.get(peerId);
+        if (!target) throw new Error("Participant not found");
+        if (target.id === peer.id) throw new Error("Cannot remove yourself");
+        if (target.role === "teacher" && peer.role !== "coordinator") {
+          throw new Error("Only a coordinator can remove the teacher");
+        }
+        log.action("remove-participant", {
+          roomId: room.id,
+          by: peer.id,
+          target: target.id,
+          targetRole: target.role,
+        });
+        const sockets = await io.in(room.id).fetchSockets();
+        const targetSock = sockets.find((s) => s.data.peerId === target.id);
+        removePeerFromRoom(room, target, { force: true });
+        io.to(room.id).emit("peer-removed", {
+          peer: target.public(),
+          by: peer.name,
+        });
+        io.to(room.id).emit("participants", room.participants());
+        if (targetSock) {
+          targetSock.emit("kicked", { reason: "Removed by " + peer.name });
+          targetSock.leave(room.id);
+          targetSock.data.peerId = null;
+          targetSock.data.roomId = null;
+        }
+        ack(callback, { ok: true });
+      } catch (err) {
+        log.error("remove-participant failed", err);
         ack(callback, { ok: false, error: err.message });
       }
     });
@@ -431,9 +460,9 @@ function attachSocketHandlers(io) {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
-        requireTeacher(peer);
-        log.action("close-session", { roomId: room.id });
-        io.to(room.id).emit("session-closed", { reason: "Teacher closed the session" });
+        requireStaff(peer);
+        log.action("close-session", { roomId: room.id, by: peer.role });
+        io.to(room.id).emit("session-closed", { reason: "Session closed by " + peer.role });
         await closeRoom(room);
         ack(callback, { ok: true });
       } catch (err) {
@@ -469,20 +498,15 @@ async function handleDisconnect(socket, { voluntary }) {
     const peer = room?.peers.get(socket.data.peerId);
     if (!room || !peer) return;
 
-    const result = removePeerFromRoom(room, peer, { force: voluntary && peer.role === "teacher" ? false : false });
+    const force = voluntary || peer.role !== "teacher";
+    const result = removePeerFromRoom(room, peer, { force });
 
     if (peer.role === "teacher" && result.keptAlive && !voluntary) {
       socket.to(room.id).emit("teacher-disconnected", {
         peerId: peer.id,
-        message: "Teacher lost connection. Session and cloud recording continue.",
+        message: "Teacher lost connection. Meeting continues.",
       });
       socket.to(room.id).emit("participants", room.participants());
-      return;
-    }
-
-    if (voluntary && peer.role === "teacher") {
-      socket.to(room.id).emit("session-closed", { reason: "Teacher left the session" });
-      await closeRoom(room);
       return;
     }
 
@@ -491,6 +515,11 @@ async function handleDisconnect(socket, { voluntary }) {
     socket.leave(room.id);
     socket.data.peerId = null;
     socket.data.roomId = null;
+
+    if (room.peers.size === 0) {
+      log.info("room empty after leave — closing", { roomId: room.id });
+      await closeRoom(room);
+    }
   } catch (err) {
     log.error("handleDisconnect failed", err);
   }
