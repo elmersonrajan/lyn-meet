@@ -1,21 +1,54 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { emitAck } from "../services/socket";
 
-function pointOnCanvas(p, canvas) {
+/** Map stroke point onto CSS pixel space (nx/ny preferred). */
+function mapPoint(p, cssW, cssH, stroke) {
   if (p.nx != null && p.ny != null) {
-    return { x: p.nx * canvas.width, y: p.ny * canvas.height };
+    return { x: p.nx * cssW, y: p.ny * cssH };
   }
-  const srcW = p.canvasWidth || 1280;
-  const srcH = p.canvasHeight || 720;
-  return {
-    x: (p.x / srcW) * canvas.width,
-    y: (p.y / srcH) * canvas.height,
-  };
+  const srcW = stroke?.canvasWidth || p.canvasWidth || cssW;
+  const srcH = stroke?.canvasHeight || p.canvasHeight || cssH;
+  if (srcW > 0 && srcH > 0) {
+    return { x: (Number(p.x) / srcW) * cssW, y: (Number(p.y) / srcH) * cssH };
+  }
+  return { x: Number(p.x) || 0, y: Number(p.y) || 0 };
 }
 
-export function useWhiteboard({ socket, isTeacher, initial = [] }) {
+/** Smooth path with quadratic midpoints for less jagged lines. */
+function strokePath(ctx, points, cssW, cssH, stroke) {
+  if (!points.length) return;
+  const pts = points.map((p) => mapPoint(p, cssW, cssH, stroke));
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  if (pts.length === 1) {
+    ctx.lineTo(pts[0].x + 0.01, pts[0].y);
+  } else if (pts.length === 2) {
+    ctx.lineTo(pts[1].x, pts[1].y);
+  } else {
+    for (let i = 1; i < pts.length - 1; i += 1) {
+      const mx = (pts[i].x + pts[i + 1].x) / 2;
+      const my = (pts[i].y + pts[i + 1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+    }
+    const last = pts[pts.length - 1];
+    const prev = pts[pts.length - 2];
+    ctx.quadraticCurveTo(prev.x, prev.y, last.x, last.y);
+  }
+  ctx.stroke();
+}
+
+/**
+ * @param {{ socket: any, canDraw: boolean, initial?: any[] }} opts
+ * canDraw = teacher OR coordinator (admin)
+ */
+export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = [] }) {
+  // Back-compat: older callers passed isTeacher
+  const allowed = canDraw || Boolean(isTeacher);
+
   const canvasRef = useRef(null);
   const drawing = useRef(false);
+  const dprRef = useRef(1);
+  const cssSizeRef = useRef({ w: 1, h: 1 });
   const [color, setColor] = useState("#163a6b");
   const strokesRef = useRef(initial || []);
 
@@ -23,21 +56,32 @@ export function useWhiteboard({ socket, isTeacher, initial = [] }) {
     try {
       const canvas = canvasRef.current;
       if (!canvas) return;
-      const ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const ctx = canvas.getContext("2d", { alpha: false });
+      if (!ctx) return;
+
+      const dpr = dprRef.current || 1;
+      const cssW = cssSizeRef.current.w;
+      const cssH = cssSizeRef.current.h;
+
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.miterLimit = 2;
+
       for (const s of strokesRef.current) {
-        ctx.strokeStyle = s.color;
-        const scale = Math.max(canvas.width / (s.canvasWidth || canvas.width), 0.5);
-        ctx.lineWidth = Math.max(1.5, (s.width || 3) * Math.min(scale, 2));
-        ctx.beginPath();
-        s.points.forEach((p, i) => {
-          const pt = pointOnCanvas({ ...p, canvasWidth: s.canvasWidth, canvasHeight: s.canvasHeight }, canvas);
-          if (i === 0) ctx.moveTo(pt.x, pt.y);
-          else ctx.lineTo(pt.x, pt.y);
-        });
-        ctx.stroke();
+        if (!s.points || !s.points.length) continue;
+        ctx.strokeStyle = s.color || "#163a6b";
+        const base = s.width || 3.5;
+        // Thickness stays stable relative to board CSS size
+        const scale = Math.min(Math.max(cssW / (s.canvasWidth || cssW), 0.75), 2);
+        ctx.lineWidth = Math.max(2, base * scale);
+        strokePath(ctx, s.points, cssW, cssH, s);
       }
     } catch (err) {
       console.error("[Whiteboard] redraw failed", err);
@@ -50,13 +94,25 @@ export function useWhiteboard({ socket, isTeacher, initial = [] }) {
       if (!canvas) return;
       const parent = canvas.parentElement;
       if (!parent) return;
+
       const rect = parent.getBoundingClientRect();
-      const w = Math.max(1, Math.round(rect.width));
-      const h = Math.max(1, Math.round(rect.height));
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
-        console.log("[Whiteboard] resize", { w, h });
+      const cssW = Math.max(2, Math.round(rect.width));
+      const cssH = Math.max(2, Math.round(rect.height));
+      // Cap DPR at 2 — sharp enough, avoids huge canvases on 3x phones
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+      dprRef.current = dpr;
+      cssSizeRef.current = { w: cssW, h: cssH };
+
+      const needW = Math.round(cssW * dpr);
+      const needH = Math.round(cssH * dpr);
+
+      if (canvas.width !== needW || canvas.height !== needH) {
+        canvas.width = needW;
+        canvas.height = needH;
+        canvas.style.width = `${cssW}px`;
+        canvas.style.height = `${cssH}px`;
+        console.log("[Whiteboard] resize HiDPI", { cssW, cssH, dpr, needW, needH });
       }
       redraw();
     } catch (err) {
@@ -72,6 +128,7 @@ export function useWhiteboard({ socket, isTeacher, initial = [] }) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return undefined;
+
     fitCanvas();
     const parent = canvas.parentElement;
     let ro;
@@ -83,10 +140,12 @@ export function useWhiteboard({ socket, isTeacher, initial = [] }) {
     } catch (err) {
       console.error("[Whiteboard] ResizeObserver failed", err);
     }
+
     window.addEventListener("resize", fitCanvas);
     window.addEventListener("orientationchange", fitCanvas);
     window.visualViewport?.addEventListener("resize", fitCanvas);
-    const t = setTimeout(fitCanvas, 50);
+    const t = setTimeout(fitCanvas, 60);
+
     return () => {
       clearTimeout(t);
       window.removeEventListener("resize", fitCanvas);
@@ -134,19 +193,21 @@ export function useWhiteboard({ socket, isTeacher, initial = [] }) {
     const src = e.touches ? e.touches[0] : e;
     const x = src.clientX - r.left;
     const y = src.clientY - r.top;
+    const w = r.width || 1;
+    const h = r.height || 1;
     return {
       x,
       y,
-      nx: r.width ? x / r.width : 0,
-      ny: r.height ? y / r.height : 0,
+      nx: x / w,
+      ny: y / h,
     };
   };
 
   const onDown = (e) => {
     try {
-      if (!isTeacher) return;
+      if (!allowed) return;
       e.preventDefault?.();
-      drawing.current = { color, width: 3, points: [pos(e)] };
+      drawing.current = { color, width: 3.5, points: [pos(e)] };
     } catch (err) {
       console.error("[Whiteboard] onDown failed", err);
     }
@@ -154,10 +215,18 @@ export function useWhiteboard({ socket, isTeacher, initial = [] }) {
 
   const onMove = (e) => {
     try {
-      if (!isTeacher || !drawing.current) return;
+      if (!allowed || !drawing.current) return;
       e.preventDefault?.();
-      drawing.current.points.push(pos(e));
-      strokesRef.current = [...strokesRef.current.filter((s) => s !== drawing.current), drawing.current];
+      const p = pos(e);
+      const pts = drawing.current.points;
+      const last = pts[pts.length - 1];
+      // Skip near-duplicate points → cleaner paths, less jagged
+      if (last && Math.hypot(p.x - last.x, p.y - last.y) < 1.2) return;
+      pts.push(p);
+      strokesRef.current = [
+        ...strokesRef.current.filter((s) => s !== drawing.current),
+        drawing.current,
+      ];
       redraw();
     } catch (err) {
       console.error("[Whiteboard] onMove failed", err);
@@ -166,14 +235,14 @@ export function useWhiteboard({ socket, isTeacher, initial = [] }) {
 
   const onUp = async () => {
     try {
-      if (!isTeacher || !drawing.current) return;
+      if (!allowed || !drawing.current) return;
       const stroke = drawing.current;
       drawing.current = false;
-      const canvas = canvasRef.current;
+      const { w, h } = cssSizeRef.current;
       const payload = {
         ...stroke,
-        canvasWidth: canvas ? canvas.width : 1280,
-        canvasHeight: canvas ? canvas.height : 720,
+        canvasWidth: w || 1280,
+        canvasHeight: h || 720,
       };
       await emitAck("whiteboard-stroke", payload);
     } catch (err) {
@@ -183,7 +252,7 @@ export function useWhiteboard({ socket, isTeacher, initial = [] }) {
 
   const clear = async () => {
     try {
-      if (!isTeacher) return;
+      if (!allowed) return;
       console.log("[Whiteboard] clear");
       await emitAck("whiteboard-clear", {});
       strokesRef.current = [];
