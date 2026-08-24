@@ -319,6 +319,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         messages={messages}
         mode={chatMode}
       />
+      <RemoteAudio items={media.remoteAudio} />
       {toast ? <div className="toast">{toast}</div> : null}
     </div>
   );
