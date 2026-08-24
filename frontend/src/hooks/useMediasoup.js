@@ -53,10 +53,8 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
             setTeacherStream(new MediaStream(teacherStreamRef.current.getTracks()));
             return;
           }
-          const id = producer.producerId || producer.peerId || track.id;
           const stream = new MediaStream([track]);
-          remoteAudioRef.current.set(id, stream);
-          console.log("[Mediasoup] class audio attached", { id, role: producer?.role, source });
+          remoteAudioRef.current.set(producer.producerId, stream);
           publishRemoteAudio();
         }
       } catch (err) {
@@ -76,8 +74,8 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
           return;
         }
         if (producer.source === "video" || producer.source === "screen") {
-          if (producer.role !== "teacher") {
-            console.log("[Mediasoup] skip non-teacher video/screen", producer);
+          if (producer.role === "student") {
+            console.log("[Mediasoup] skip student video/screen", producer);
             return;
           }
         }
@@ -197,11 +195,7 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
         sendTransportRef.current = await makeTransport("send");
         recvTransportRef.current = await makeTransport("recv");
         setReady(true);
-        try {
-          await startLocalMedia();
-        } catch (mediaErr) {
-          console.warn("[Mediasoup] local mic/cam skipped — still receiving class audio", mediaErr);
-        }
+        await startLocalMedia();
       } catch (err) {
         console.error("[Mediasoup] initDevice failed", err);
         throw err;
@@ -301,7 +295,7 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
 
   const startScreen = useCallback(async () => {
     try {
-      if (role !== "teacher") throw new Error("Only teacher can share screen");
+      if (role !== "teacher" && role !== "coordinator") throw new Error("Only teacher or coordinator can share screen");
       console.log("[Mediasoup] startScreen");
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
