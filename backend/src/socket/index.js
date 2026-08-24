@@ -349,7 +349,7 @@ function attachSocketHandlers(io) {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
-        requireTeacher(peer);
+        requireStaff(peer);
         const rec = await room.startRecording();
         io.to(room.id).emit("recording-started", rec);
         ack(callback, { ok: true, recording: rec });
@@ -363,7 +363,7 @@ function attachSocketHandlers(io) {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
-        requireTeacher(peer);
+        requireStaff(peer);
         const rec = await room.stopRecording();
         io.to(room.id).emit("recording-stopped", rec);
         ack(callback, { ok: true, recording: rec });
@@ -377,7 +377,7 @@ function attachSocketHandlers(io) {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
-        requireTeacher(peer);
+        requireStaff(peer);
         room.stageMode = mode;
         io.to(room.id).emit("stage-mode", { mode });
         ack(callback, { ok: true });
@@ -391,7 +391,7 @@ function attachSocketHandlers(io) {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
-        requireTeacher(peer);
+        requireStaff(peer);
         const cw = Number(stroke.canvasWidth) || 1280;
         const ch = Number(stroke.canvasHeight) || 720;
         const normalized = {
@@ -423,7 +423,7 @@ function attachSocketHandlers(io) {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
-        requireTeacher(peer);
+        requireStaff(peer);
         room.whiteboard = [];
         io.to(room.id).emit("whiteboard-clear");
         ack(callback, { ok: true });
