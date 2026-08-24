@@ -49,7 +49,7 @@ export default function Toolbar({
         </>
       ) : null}
 
-      {isTeacher ? (
+      {staff ? (
         <button className={`tbtn ${recording ? "live" : ""}`} onClick={onToggleRecord}>
           <span className="ico" style={{ color: "#d32f2f" }}>
             ●
