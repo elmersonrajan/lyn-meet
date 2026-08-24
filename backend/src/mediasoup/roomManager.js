@@ -132,8 +132,9 @@ class Room {
 
   async produce(peer, { transportId, kind, rtpParameters, source }) {
     try {
-      if (peer.role === "coordinator" && (source === "video" || source === "screen")) {
-        throw new Error("Coordinator has no camera or screen share");
+      // Coordinator = admin: can share screen, cannot publish camera (teacher camera only)
+      if (peer.role === "coordinator" && source === "video") {
+        throw new Error("Coordinator has no camera (use screen share instead)");
       }
       if (peer.role === "student" && (source === "video" || source === "screen")) {
         throw new Error("Students cannot produce video or screen share");
