@@ -69,7 +69,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   outline: none;
   font-size: 16px;
 }
-.field input:focus { border-color: var(--navy); box-shadow: 0 0 0 3px rgba(22, 58, 107, 0.12); }
+.field input:focus {
+  border-color: var(--navy);
+  box-shadow: 0 0 0 3px rgba(22, 58, 107, 0.12);
+}
 
 .role-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
 .role-row.three { grid-template-columns: 1fr 1fr 1fr; }
@@ -346,8 +349,22 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .msg .meta { color: var(--muted); font-size: 11px; }
 .msg.qa { background: #fff8e8; border-radius: 6px; padding: 6px; }
 .chat-form { display: flex; gap: 6px; padding: 8px; border-top: 1px solid #dbe4f0; }
-.chat-form input { flex: 1; height: 36px; border: 1px solid #b7c7de; border-radius: 6px; padding: 0 8px; font-size: 16px; }
-.chat-form button { border: 0; background: var(--navy); color: #fff; border-radius: 6px; padding: 0 12px; cursor: pointer; }
+.chat-form input {
+  flex: 1;
+  height: 36px;
+  border: 1px solid #b7c7de;
+  border-radius: 6px;
+  padding: 0 8px;
+  font-size: 16px;
+}
+.chat-form button {
+  border: 0;
+  background: var(--navy);
+  color: #fff;
+  border-radius: 6px;
+  padding: 0 12px;
+  cursor: pointer;
+}
 
 .rec-pill {
   position: absolute;
@@ -362,7 +379,28 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   font-weight: 700;
 }
 
-/* Tablet */
+.remote-audio-sinks {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+.hear-class-btn {
+  position: fixed;
+  left: 50%;
+  bottom: 88px;
+  transform: translateX(-50%);
+  z-index: 30;
+  border: 0;
+  border-radius: 999px;
+  background: var(--navy);
+  color: #fff;
+  font-weight: 700;
+  padding: 10px 16px;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
 @media (max-width: 1024px) {
   .room { padding: 6px; gap: 6px; }
   .room-frame {
@@ -398,7 +436,6 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   }
 }
 
-/* Phone */
 @media (max-width: 640px) {
   .lobby { padding: 12px; }
   .lobby-card { padding: 20px 16px 18px; border-radius: 12px; }
