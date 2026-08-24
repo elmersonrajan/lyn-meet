@@ -32,7 +32,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
 
   const board = useWhiteboard({
     socket,
-    isTeacher,
+    canDraw: isStaff,
     initial: joinPayload.whiteboard || [],
   });
 
@@ -144,7 +144,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
 
   const setStage = async (mode) => {
     try {
-      if (!isTeacher) return;
+      if (!isStaff) return;
       console.log("[MeetingRoom] setStage", mode);
       if (mode === "screen") {
         if (!media.sharing) await media.startScreen();
@@ -159,7 +159,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
 
   const onToggleRecord = async () => {
     try {
-      if (!isTeacher) return;
+      if (!isStaff) return;
       if (recording) {
         await emitAck("stop-recording", {});
       } else {
@@ -213,7 +213,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
 
   const pickClip = async (e) => {
     try {
-      if (!isTeacher) return;
+      if (!isStaff) return;
       const file = e.target.files?.[0];
       if (!file) return;
       if (clipUrl) URL.revokeObjectURL(clipUrl);
@@ -234,7 +234,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       <div className="room-frame">
         <div className="stage-wrap">
           {recording ? <div className="rec-pill">REC CLOUD</div> : null}
-          {isTeacher ? (
+          {isStaff ? (
             <div className="stage-tools">
               <button className={stageMode === "draw" ? "active" : ""} onClick={() => setStage("draw")}>
                 ✏ Draw
@@ -319,7 +319,6 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         messages={messages}
         mode={chatMode}
       />
-      <RemoteAudio items={media.remoteAudio} />
       {toast ? <div className="toast">{toast}</div> : null}
     </div>
   );
