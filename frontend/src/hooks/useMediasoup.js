@@ -53,8 +53,10 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
             setTeacherStream(new MediaStream(teacherStreamRef.current.getTracks()));
             return;
           }
+          const id = producer.producerId || producer.peerId || track.id;
           const stream = new MediaStream([track]);
-          remoteAudioRef.current.set(producer.producerId, stream);
+          remoteAudioRef.current.set(id, stream);
+          console.log("[Mediasoup] class audio attached", { id, role: producer?.role, source });
           publishRemoteAudio();
         }
       } catch (err) {
@@ -195,7 +197,11 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
         sendTransportRef.current = await makeTransport("send");
         recvTransportRef.current = await makeTransport("recv");
         setReady(true);
-        await startLocalMedia();
+        try {
+          await startLocalMedia();
+        } catch (mediaErr) {
+          console.warn("[Mediasoup] local mic/cam skipped — still receiving class audio", mediaErr);
+        }
       } catch (err) {
         console.error("[Mediasoup] initDevice failed", err);
         throw err;
