@@ -50,6 +50,7 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
   const dprRef = useRef(1);
   const cssSizeRef = useRef({ w: 1, h: 1 });
   const [color, setColor] = useState("#163a6b");
+  const [tool, setTool] = useState("pen");
   const strokesRef = useRef(initial || []);
 
   const redraw = useCallback(() => {
@@ -96,10 +97,13 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
       if (!parent) return;
 
       const rect = parent.getBoundingClientRect();
-      const cssW = Math.max(2, Math.round(rect.width));
-      const cssH = Math.max(2, Math.round(rect.height));
-      // Cap DPR at 2 — sharp enough, avoids huge canvases on 3x phones
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      // GUARD: Skip resizing if container is hidden or collapsed (e.g. during tab/stage transitions)
+      if (rect.width < 50 || rect.height < 50) return;
+
+      const cssW = Math.round(rect.width);
+      const cssH = Math.round(rect.height);
+      // Cap DPR at 2.5 — sharp enough for HiDPI/Retina screens
+      const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
 
       dprRef.current = dpr;
       cssSizeRef.current = { w: cssW, h: cssH };
@@ -207,7 +211,13 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
     try {
       if (!allowed) return;
       e.preventDefault?.();
-      drawing.current = { color, width: 3.5, points: [pos(e)] };
+      // Eraser paints the board's own white — no protocol change, erases for everyone.
+      const erasing = tool === "eraser";
+      drawing.current = {
+        color: erasing ? "#ffffff" : color,
+        width: erasing ? 28 : 3.5,
+        points: [pos(e)],
+      };
     } catch (err) {
       console.error("[Whiteboard] onDown failed", err);
     }
@@ -262,5 +272,17 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
     }
   };
 
-  return { canvasRef, onDown, onMove, onUp, clear, color, setColor };
+  return {
+    canvasRef,
+    onDown,
+    onMove,
+    onUp,
+    clear,
+    color,
+    setColor,
+    tool,
+    setTool,
+    allowed,
+    fitCanvas,
+  };
 }

@@ -224,8 +224,19 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
       }
     };
 
+    // Server already paused the producer — just reflect it locally.
+    const onMicLocked = () => {
+      if (role !== "student") return;
+      console.log("[Mediasoup] mic-locked received");
+      localStream?.getAudioTracks().forEach((t) => {
+        t.enabled = false;
+      });
+      setMicOn(false);
+    };
+
     socket.on("new-producer", onNew);
     socket.on("producer-closed", onClosed);
+    socket.on("mic-locked", onMicLocked);
     socket.on("force-mute", async () => {
       try {
         if (role !== "student") return;
@@ -243,6 +254,7 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
     return () => {
       socket.off("new-producer", onNew);
       socket.off("producer-closed", onClosed);
+      socket.off("mic-locked", onMicLocked);
       socket.off("force-mute");
     };
   }, [socket, enabled, consumeProducer, localStream, role, publishRemoteAudio]);
@@ -262,17 +274,14 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
   );
 
   const toggleMic = useCallback(async () => {
-    try {
-      const next = !micOn;
-      console.log("[Mediasoup] toggleMic", next, { role });
-      localStream?.getAudioTracks().forEach((t) => {
-        t.enabled = next;
-      });
-      await emitAck(next ? "resume-producer" : "pause-producer", { source: "audio" });
-      setMicOn(next);
-    } catch (err) {
-      console.error("[Mediasoup] toggleMic failed", err);
-    }
+    const next = !micOn;
+    console.log("[Mediasoup] toggleMic", next, { role });
+    // Ask the server before opening the track — an unmute can be refused.
+    await emitAck(next ? "resume-producer" : "pause-producer", { source: "audio" });
+    localStream?.getAudioTracks().forEach((t) => {
+      t.enabled = next;
+    });
+    setMicOn(next);
   }, [micOn, localStream, role]);
 
   const toggleCam = useCallback(async () => {

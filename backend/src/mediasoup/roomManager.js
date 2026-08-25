@@ -53,7 +53,12 @@ class Room {
     this.teacherLeaveTimer = null;
     this.chat = [];
     this.whiteboard = [];
+    this.polls = [];
     this.stageMode = "whiteboard";
+  }
+
+  hasLiveStaff() {
+    return this.getStaff().some((p) => !p.disconnected);
   }
 
   getTeacher() {
@@ -374,6 +379,10 @@ async function closeRoom(room) {
     log.action("closeRoom", { roomId: room.id });
     room.closed = true;
     if (room.teacherLeaveTimer) clearTimeout(room.teacherLeaveTimer);
+    for (const poll of room.polls) {
+      if (poll.timer) clearTimeout(poll.timer);
+      poll.timer = null;
+    }
     if (room.recorder && room.recorder.active) {
       await room.stopRecording();
     }

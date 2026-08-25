@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useUser } from "../context/UserContext.jsx";
 import { emitAck } from "../services/socket.js";
 import { useMediasoup } from "../hooks/useMediasoup.js";
@@ -10,18 +10,39 @@ import Whiteboard from "./Whiteboard.jsx";
 import ScreenShare from "./ScreenShare.jsx";
 import ChatPanel from "./ChatPanel.jsx";
 import RemoteAudio from "./RemoteAudio.jsx";
+import { IconPen, IconScreen, IconBoard, IconClip } from "./Icons.jsx";
 
 export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   const { session, isTeacher, isCoordinator, isStaff, setSession } = useUser();
   const [participants, setParticipants] = useState(joinPayload.participants || []);
   const [stageMode, setStageMode] = useState(joinPayload.stageMode || "whiteboard");
   const [messages, setMessages] = useState(joinPayload.chat || []);
+  const [polls, setPolls] = useState(joinPayload.polls || []);
+  const [myVotes, setMyVotes] = useState(() => {
+    const seed = {};
+    for (const p of joinPayload.polls || []) {
+      if (p.myVote != null) seed[p.id] = p.myVote;
+    }
+    return seed;
+  });
   const [chatOpen, setChatOpen] = useState(false);
-  const [chatMode, setChatMode] = useState("chat");
+  const [chatTab, setChatTab] = useState("chat");
+  const [unreadChat, setUnreadChat] = useState(0);
   const [recording, setRecording] = useState(Boolean(joinPayload.recording?.active));
   const [toast, setToast] = useState("");
   const [clipUrl, setClipUrl] = useState("");
   const [teacherDisconnected, setTeacherDisconnected] = useState(false);
+
+  const staffPresent = participants.some(
+    (p) => (p.role === "teacher" || p.role === "coordinator") && !p.disconnected,
+  );
+  const micLocked = !isStaff && !staffPresent;
+  const activePoll = polls.some((p) => !p.closed);
+
+  const showToast = useCallback((text) => {
+    setToast(text);
+    setTimeout(() => setToast(""), 4000);
+  }, []);
 
   const media = useMediasoup({
     socket,
@@ -35,6 +56,14 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     canDraw: isStaff,
     initial: joinPayload.whiteboard || [],
   });
+
+  useEffect(() => {
+    if (stageMode === "whiteboard" || stageMode === "draw") {
+      requestAnimationFrame(() => {
+        board.fitCanvas?.();
+      });
+    }
+  }, [stageMode, board]);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,10 +89,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   }, []);
 
   useEffect(() => {
-    const show = (text) => {
-      setToast(text);
-      setTimeout(() => setToast(""), 4000);
-    };
+    const show = showToast;
 
     const onParticipants = (list) => setParticipants(list);
     const onJoined = (peer) => {
@@ -79,7 +105,22 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       if (peer.role === "teacher") setTeacherDisconnected(false);
     };
     const onStage = ({ mode }) => setStageMode(mode);
-    const onChat = (msg) => setMessages((prev) => [...prev, msg]);
+    const onChat = (msg) => {
+      setMessages((prev) => [...prev, msg]);
+      setUnreadChat((n) => n + 1);
+    };
+    const onPollStarted = (poll) => {
+      setPolls((prev) => [...prev.filter((p) => p.id !== poll.id), poll]);
+      show(`New poll: ${poll.question}`);
+    };
+    const onPollEnded = (poll) => {
+      setPolls((prev) => prev.map((p) => (p.id === poll.id ? poll : p)));
+      show("Poll closed — results are in");
+    };
+    const onPollCount = ({ pollId, totalVotes }) => {
+      setPolls((prev) => prev.map((p) => (p.id === pollId ? { ...p, totalVotes } : p)));
+    };
+    const onMicLocked = ({ reason }) => show(reason || "Mic disabled");
     const onRecStart = () => {
       setRecording(true);
       show("Cloud recording started");
@@ -118,6 +159,10 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     socket.on("peer-left", onLeftPeer);
     socket.on("stage-mode", onStage);
     socket.on("chat-message", onChat);
+    socket.on("poll-started", onPollStarted);
+    socket.on("poll-ended", onPollEnded);
+    socket.on("poll-vote-count", onPollCount);
+    socket.on("mic-locked", onMicLocked);
     socket.on("recording-started", onRecStart);
     socket.on("recording-stopped", onRecStop);
     socket.on("teacher-disconnected", onTeacherDown);
@@ -132,6 +177,10 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       socket.off("peer-left", onLeftPeer);
       socket.off("stage-mode", onStage);
       socket.off("chat-message", onChat);
+      socket.off("poll-started", onPollStarted);
+      socket.off("poll-ended", onPollEnded);
+      socket.off("poll-vote-count", onPollCount);
+      socket.off("mic-locked", onMicLocked);
       socket.off("recording-started", onRecStart);
       socket.off("recording-stopped", onRecStop);
       socket.off("teacher-disconnected", onTeacherDown);
@@ -140,7 +189,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       socket.off("kicked", onKicked);
       socket.off("peer-removed", onRemoved);
     };
-  }, [socket, media, onLeft, setSession]);
+  }, [socket, media, onLeft, setSession, showToast]);
 
   const setStage = async (mode) => {
     try {
@@ -168,6 +217,19 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     } catch (err) {
       console.error("[MeetingRoom] record toggle failed", err);
       setToast(err.message);
+    }
+  };
+
+  const onToggleMic = async () => {
+    try {
+      if (micLocked) {
+        showToast("Wait for a teacher or coordinator to join before unmuting");
+        return;
+      }
+      await media.toggleMic();
+    } catch (err) {
+      console.error("[MeetingRoom] mic toggle failed", err);
+      showToast(err.message);
     }
   };
 
@@ -237,42 +299,36 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
           {isStaff ? (
             <div className="stage-tools">
               <button className={stageMode === "draw" ? "active" : ""} onClick={() => setStage("draw")}>
-                ✏ Draw
-              </button>
-              <button className={stageMode === "screen" ? "active" : ""} onClick={() => setStage("screen")}>
-                🖥 Entire Screen
+                <IconPen size={16} />
+                Draw
               </button>
               <button
                 className={stageMode === "whiteboard" ? "active" : ""}
                 onClick={() => setStage("whiteboard")}
               >
-                ⬜ Whiteboard
+                <IconBoard size={16} />
+                Whiteboard
               </button>
-              <label
-                className={stageMode === "clip" ? "active" : ""}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "8px 12px",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                  color: "#163a6b",
-                }}
-              >
-                ▶ Video Clip
+              <button className={stageMode === "screen" ? "active" : ""} onClick={() => setStage("screen")}>
+                <IconScreen size={16} />
+                Screen
+              </button>
+              <label className={stageMode === "clip" ? "active" : ""}>
+                <IconClip size={16} />
+                Video Clip
                 <input type="file" accept="video/*" hidden onChange={pickClip} />
               </label>
             </div>
           ) : null}
           <div className="stage-canvas">
+            <div style={{ display: stageMode === "whiteboard" || stageMode === "draw" ? "block" : "none", width: "100%", height: "100%" }}>
+              <Whiteboard board={board} />
+            </div>
             {stageMode === "screen" && media.screenStream ? (
               <ScreenShare stream={media.screenStream} />
             ) : stageMode === "clip" && clipUrl ? (
               <video className="clip" src={clipUrl} controls autoPlay />
-            ) : (
-              <Whiteboard board={board} />
-            )}
+            ) : null}
           </div>
         </div>
         <aside className="side">
@@ -297,27 +353,40 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         camOn={media.camOn}
         micOn={media.micOn}
         recording={recording}
+        micLocked={micLocked}
+        unreadChat={unreadChat}
+        activePoll={activePoll}
         onToggleCam={media.toggleCam}
-        onToggleMic={media.toggleMic}
+        onToggleMic={onToggleMic}
         onMuteOthers={onMuteOthers}
         onToggleRecord={onToggleRecord}
         onCloseSession={onCloseSession}
-        onPostQa={() => {
-          setChatMode("qa");
+        onOpenPolls={() => {
+          setChatTab("poll");
           setChatOpen(true);
         }}
-        onPostMsg={() => {
-          setChatMode("chat");
+        onOpenChat={() => {
+          setChatTab("chat");
           setChatOpen(true);
+          setUnreadChat(0);
         }}
         onLeave={onLeave}
       />
 
       <ChatPanel
         open={chatOpen}
+        tab={chatTab}
+        onTab={(t) => {
+          setChatTab(t);
+          if (t === "chat") setUnreadChat(0);
+        }}
         onClose={() => setChatOpen(false)}
         messages={messages}
-        mode={chatMode}
+        polls={polls}
+        myVotes={myVotes}
+        isStaff={isStaff}
+        onVoted={(pollId, index) => setMyVotes((prev) => ({ ...prev, [pollId]: index }))}
+        onError={showToast}
       />
       {toast ? <div className="toast">{toast}</div> : null}
     </div>
