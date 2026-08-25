@@ -50,6 +50,7 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
   const dprRef = useRef(1);
   const cssSizeRef = useRef({ w: 1, h: 1 });
   const [color, setColor] = useState("#163a6b");
+  const [tool, setTool] = useState("pen");
   const strokesRef = useRef(initial || []);
 
   const redraw = useCallback(() => {
@@ -210,7 +211,13 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
     try {
       if (!allowed) return;
       e.preventDefault?.();
-      drawing.current = { color, width: 3.5, points: [pos(e)] };
+      // Eraser paints the board's own white — no protocol change, erases for everyone.
+      const erasing = tool === "eraser";
+      drawing.current = {
+        color: erasing ? "#ffffff" : color,
+        width: erasing ? 28 : 3.5,
+        points: [pos(e)],
+      };
     } catch (err) {
       console.error("[Whiteboard] onDown failed", err);
     }
@@ -265,5 +272,17 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
     }
   };
 
-  return { canvasRef, onDown, onMove, onUp, clear, color, setColor, fitCanvas };
+  return {
+    canvasRef,
+    onDown,
+    onMove,
+    onUp,
+    clear,
+    color,
+    setColor,
+    tool,
+    setTool,
+    allowed,
+    fitCanvas,
+  };
 }

@@ -1,4 +1,17 @@
 import React from "react";
+import {
+  IconVideo,
+  IconVideoOff,
+  IconMic,
+  IconMicOff,
+  IconMuteAll,
+  IconRecord,
+  IconStopRecord,
+  IconPoll,
+  IconChat,
+  IconLeave,
+  IconEndSession,
+} from "./Icons.jsx";
 
 export default function Toolbar({
   isTeacher,
@@ -6,69 +19,105 @@ export default function Toolbar({
   camOn,
   micOn,
   recording,
+  micLocked,
+  unreadChat,
+  activePoll,
   onToggleCam,
   onToggleMic,
   onMuteOthers,
   onToggleRecord,
   onCloseSession,
-  onPostQa,
-  onPostMsg,
+  onOpenPolls,
+  onOpenChat,
   onLeave,
 }) {
   const staff = isTeacher || isCoordinator;
+
   return (
     <div className="toolbar">
       {isTeacher ? (
-        <>
-          <button className="tbtn" onClick={onToggleCam}>
-            <span className="ico">{camOn ? "📹" : "🚫"}</span>
-            {camOn ? "Video On" : "Video Off"}
-          </button>
-          <button className="tbtn" onClick={onToggleCam}>
-            <span className="ico">⏸</span>
-            Pause Video
-          </button>
-        </>
-      ) : null}
-
-      <button className="tbtn" onClick={onToggleMic}>
-        <span className="ico">{micOn ? "🎤" : "🔇"}</span>
-        {micOn ? "Mute Mic" : "Unmute Mic"}
-      </button>
-
-      {staff ? (
-        <>
-          <button className="tbtn" onClick={onMuteOthers}>
-            <span className="ico">👥</span>
-            Mute Others
-          </button>
-          <button className="tbtn" onClick={onCloseSession}>
-            <span className="ico">⎋</span>
-            Close Session
-          </button>
-        </>
-      ) : null}
-
-      {staff ? (
-        <button className={`tbtn ${recording ? "live" : ""}`} onClick={onToggleRecord}>
-          <span className="ico" style={{ color: "#d32f2f" }}>
-            ●
-          </span>
-          {recording ? "Stop Record" : "Start Record"}
+        <button
+          className={`tbtn ${camOn ? "on" : ""}`}
+          onClick={onToggleCam}
+          title={camOn ? "Turn camera off" : "Turn camera on"}
+        >
+          <span className="ico">{camOn ? <IconVideo /> : <IconVideoOff />}</span>
+          {camOn ? "Camera On" : "Camera Off"}
         </button>
       ) : null}
 
-      <button className="tbtn" onClick={onPostQa}>
-        <span className="ico">❓</span>
-        Post a QA
+      <button
+        className={`tbtn ${micOn ? "on" : ""} ${micLocked ? "locked" : ""}`}
+        onClick={onToggleMic}
+        disabled={micLocked}
+        title={
+          micLocked
+            ? "You can unmute only while a teacher or coordinator is in the meeting"
+            : micOn
+              ? "Mute your mic"
+              : "Unmute your mic"
+        }
+      >
+        <span className="ico">{micOn ? <IconMic /> : <IconMicOff />}</span>
+        {micLocked ? "Mic Locked" : micOn ? "Mute" : "Unmute"}
       </button>
-      <button className="tbtn" onClick={onPostMsg}>
-        <span className="ico">💬</span>
-        Post Msg
+
+      {staff ? (
+        <>
+          <button className="tbtn" onClick={onMuteOthers} title="Mute all students">
+            <span className="ico">
+              <IconMuteAll />
+            </span>
+            Mute All
+          </button>
+
+          <button
+            className={`tbtn ${recording ? "live" : ""}`}
+            onClick={onToggleRecord}
+            title={recording ? "Stop cloud recording" : "Start cloud recording"}
+          >
+            <span className="ico">{recording ? <IconStopRecord /> : <IconRecord />}</span>
+            {recording ? "Stop Rec" : "Record"}
+          </button>
+        </>
+      ) : null}
+
+      <button
+        className={`tbtn ${activePoll ? "attn" : ""}`}
+        onClick={onOpenPolls}
+        title={staff ? "Create or review a poll" : "View the live poll"}
+      >
+        <span className="ico">
+          <IconPoll />
+        </span>
+        {staff ? "New Poll" : "Poll"}
+        {activePoll ? <span className="dot" /> : null}
       </button>
-      <button className="tbtn danger" onClick={onLeave}>
-        <span className="ico">➜</span>
-        Leave Session
+
+      <button className="tbtn" onClick={onOpenChat} title="Announcements from teaching staff">
+        <span className="ico">
+          <IconChat />
+        </span>
+        {staff ? "Announce" : "Messages"}
+        {unreadChat ? <span className="badge">{unreadChat > 9 ? "9+" : unreadChat}</span> : null}
+      </button>
+
+      <span className="tspacer" />
+
+      {staff ? (
+        <button className="tbtn danger" onClick={onCloseSession} title="End the meeting for everyone">
+          <span className="ico">
+            <IconEndSession />
+          </span>
+          End Session
+        </button>
+      ) : null}
+
+      <button className="tbtn danger" onClick={onLeave} title="Leave the meeting">
+        <span className="ico">
+          <IconLeave />
+        </span>
+        Leave
       </button>
     </div>
   );

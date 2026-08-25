@@ -42,6 +42,47 @@ function requireStaff(peer) {
   }
 }
 
+const POLL_DURATION_MS = Number(process.env.POLL_DURATION_MS || 120000);
+
+/** Vote counts and the correct answer stay hidden until the poll closes. */
+function pollPublic(poll, peerId) {
+  const view = {
+    id: poll.id,
+    question: poll.question,
+    options: poll.options,
+    from: poll.from,
+    createdAt: poll.createdAt,
+    endsAt: poll.endsAt,
+    closed: poll.closed,
+    totalVotes: poll.votes.size,
+  };
+  if (poll.closed) {
+    const counts = poll.options.map(() => 0);
+    for (const idx of poll.votes.values()) {
+      if (counts[idx] != null) counts[idx] += 1;
+    }
+    view.counts = counts;
+    view.correctIndex = poll.correctIndex;
+  }
+  if (peerId && poll.votes.has(peerId)) {
+    view.myVote = poll.votes.get(peerId);
+  }
+  return view;
+}
+
+function closePoll(io, room, poll) {
+  try {
+    if (poll.closed) return;
+    poll.closed = true;
+    if (poll.timer) clearTimeout(poll.timer);
+    poll.timer = null;
+    log.action("poll-ended", { roomId: room.id, pollId: poll.id, votes: poll.votes.size });
+    io.to(room.id).emit("poll-ended", pollPublic(poll));
+  } catch (err) {
+    log.error("closePoll failed", err);
+  }
+}
+
 function joinAck(room, peer, extra = {}) {
   return {
     ok: true,
@@ -51,6 +92,7 @@ function joinAck(room, peer, extra = {}) {
     iceServers: getIceServers(),
     stageMode: room.stageMode,
     chat: room.chat,
+    polls: room.polls.map((p) => pollPublic(p, peer.id)),
     whiteboard: room.whiteboard,
     recording: room.recorder ? room.recorder.snapshot() : null,
     producers: room.listProducers(),
@@ -98,6 +140,7 @@ function attachSocketHandlers(io) {
             socket.data.roomId = room.id;
             socket.join(room.id);
             socket.to(room.id).emit("peer-reconnected", currentTeacher.public());
+            io.to(room.id).emit("participants", room.participants());
             meetingLog.writeEntry("teacher-reconnect", {
               name,
               meetingId,
@@ -173,6 +216,12 @@ function attachSocketHandlers(io) {
           rtpParameters,
           source: source || kind,
         });
+        if (peer.role === "student" && producer.appData.source === "audio" && !room.hasLiveStaff()) {
+          await room.pauseProducer(peer, "audio");
+          socket.emit("mic-locked", {
+            reason: "Mic stays muted until a teacher or coordinator joins",
+          });
+        }
         socket.to(room.id).emit("new-producer", {
           producerId: producer.id,
           peerId: peer.id,
@@ -260,6 +309,9 @@ function attachSocketHandlers(io) {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
         if (!room || !peer) throw new Error("Not in a room");
+        if (peer.role === "student" && source === "audio" && !room.hasLiveStaff()) {
+          throw new Error("You can unmute only while a teacher or coordinator is in the meeting");
+        }
         await room.resumeProducer(peer, source);
         io.to(room.id).emit("participants", room.participants());
         io.to(room.id).emit("media-state", { peerId: peer.id, source, paused: false });
@@ -438,6 +490,7 @@ function attachSocketHandlers(io) {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
         if (!room || !peer) throw new Error("Not in a room");
+        requireStaff(peer);
         const message = {
           id: uuid(),
           text: String(text || "").slice(0, 2000),
@@ -452,6 +505,104 @@ function attachSocketHandlers(io) {
         ack(callback, { ok: true, message });
       } catch (err) {
         log.error("post-message failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    socket.on("create-poll", (payload, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        if (!room || !peer) throw new Error("Not in a room");
+        requireStaff(peer);
+
+        const question = String(payload?.question || "").trim().slice(0, 500);
+        if (!question) throw new Error("Poll question is required");
+
+        const options = (Array.isArray(payload?.options) ? payload.options : [])
+          .slice(0, 4)
+          .map((o) => String(o || "").trim().slice(0, 200));
+        if (options.length !== 4 || options.some((o) => !o)) {
+          throw new Error("Provide all 4 options");
+        }
+
+        const correctIndex = Number(payload?.correctIndex);
+        if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex > 3) {
+          throw new Error("Mark which option is correct");
+        }
+
+        if (room.polls.some((p) => !p.closed)) {
+          throw new Error("A poll is already running — wait for it to finish");
+        }
+
+        const durationMs = Math.min(
+          Math.max(Number(payload?.durationMs) || POLL_DURATION_MS, 15000),
+          600000,
+        );
+        const now = Date.now();
+        const poll = {
+          id: uuid(),
+          question,
+          options,
+          correctIndex,
+          from: peer.name,
+          createdAt: now,
+          endsAt: now + durationMs,
+          closed: false,
+          votes: new Map(),
+          timer: null,
+        };
+        room.polls.push(poll);
+        if (room.polls.length > 50) room.polls.splice(0, room.polls.length - 50);
+        poll.timer = setTimeout(() => closePoll(io, room, poll), durationMs);
+
+        log.action("poll-started", { roomId: room.id, pollId: poll.id, by: peer.name, durationMs });
+        io.to(room.id).emit("poll-started", pollPublic(poll));
+        ack(callback, { ok: true, poll: pollPublic(poll, peer.id) });
+      } catch (err) {
+        log.error("create-poll failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    socket.on("vote-poll", ({ pollId, optionIndex }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        if (!room || !peer) throw new Error("Not in a room");
+
+        const poll = room.polls.find((p) => p.id === pollId);
+        if (!poll) throw new Error("Poll not found");
+        if (poll.closed || Date.now() >= poll.endsAt) throw new Error("This poll has closed");
+        if (poll.votes.has(peer.id)) throw new Error("You already voted");
+
+        const idx = Number(optionIndex);
+        if (!Number.isInteger(idx) || idx < 0 || idx >= poll.options.length) {
+          throw new Error("Invalid option");
+        }
+
+        poll.votes.set(peer.id, idx);
+        log.action("poll-vote", { roomId: room.id, pollId: poll.id, peerId: peer.id });
+        io.to(room.id).emit("poll-vote-count", { pollId: poll.id, totalVotes: poll.votes.size });
+        ack(callback, { ok: true, optionIndex: idx });
+      } catch (err) {
+        log.error("vote-poll failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    socket.on("end-poll", ({ pollId }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        if (!room || !peer) throw new Error("Not in a room");
+        requireStaff(peer);
+        const poll = room.polls.find((p) => p.id === pollId);
+        if (!poll) throw new Error("Poll not found");
+        closePoll(io, room, poll);
+        ack(callback, { ok: true });
+      } catch (err) {
+        log.error("end-poll failed", err);
         ack(callback, { ok: false, error: err.message });
       }
     });
@@ -473,7 +624,7 @@ function attachSocketHandlers(io) {
 
     socket.on("leave-room", async (_payload, callback) => {
       try {
-        await handleDisconnect(socket, { voluntary: true });
+        await handleDisconnect(io, socket, { voluntary: true });
         callback?.({ ok: true });
       } catch (err) {
         log.error("leave-room failed", err);
@@ -484,7 +635,7 @@ function attachSocketHandlers(io) {
     socket.on("disconnect", async (reason) => {
       try {
         log.info("client disconnected", { socketId: socket.id, reason });
-        await handleDisconnect(socket, { voluntary: false });
+        await handleDisconnect(io, socket, { voluntary: false });
       } catch (err) {
         log.error("disconnect handler failed", err);
       }
@@ -492,12 +643,29 @@ function attachSocketHandlers(io) {
   });
 }
 
-async function handleDisconnect(socket, { voluntary }) {
+/** With no staff left, students lose the mic until a teacher or coordinator returns. */
+async function lockStudentMicsIfUnstaffed(io, room) {
+  try {
+    if (room.hasLiveStaff()) return;
+    for (const student of room.peers.values()) {
+      if (student.role === "student") await room.pauseProducer(student, "audio");
+    }
+    io.to(room.id).emit("mic-locked", {
+      reason: "Mic disabled — no teacher or coordinator in the meeting",
+    });
+    io.to(room.id).emit("participants", room.participants());
+  } catch (err) {
+    log.error("lockStudentMicsIfUnstaffed failed", err);
+  }
+}
+
+async function handleDisconnect(io, socket, { voluntary }) {
   try {
     const room = getRoom(socket.data.roomId);
     const peer = room?.peers.get(socket.data.peerId);
     if (!room || !peer) return;
 
+    const wasStaff = peer.role === "teacher" || peer.role === "coordinator";
     const force = voluntary || peer.role !== "teacher";
     const result = removePeerFromRoom(room, peer, { force });
 
@@ -507,8 +675,11 @@ async function handleDisconnect(socket, { voluntary }) {
         message: "Teacher lost connection. Meeting continues.",
       });
       socket.to(room.id).emit("participants", room.participants());
+      await lockStudentMicsIfUnstaffed(io, room);
       return;
     }
+
+    if (wasStaff) await lockStudentMicsIfUnstaffed(io, room);
 
     socket.to(room.id).emit("peer-left", peer.public());
     socket.to(room.id).emit("participants", room.participants());
