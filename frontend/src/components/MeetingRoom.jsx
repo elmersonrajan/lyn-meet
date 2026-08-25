@@ -10,6 +10,7 @@ import Whiteboard from "./Whiteboard.jsx";
 import ScreenShare from "./ScreenShare.jsx";
 import ChatPanel from "./ChatPanel.jsx";
 import RemoteAudio from "./RemoteAudio.jsx";
+import AttendancePanel from "./AttendancePanel.jsx";
 import { IconPen, IconScreen, IconBoard, IconClip } from "./Icons.jsx";
 
 export default function MeetingRoom({ socket, joinPayload, onLeft }) {
@@ -26,6 +27,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     return seed;
   });
   const [chatOpen, setChatOpen] = useState(false);
+  const [attendanceOpen, setAttendanceOpen] = useState(false);
   const [chatTab, setChatTab] = useState("chat");
   const [unreadChat, setUnreadChat] = useState(0);
   const [recording, setRecording] = useState(Boolean(joinPayload.recording?.active));
@@ -370,7 +372,15 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
           setChatOpen(true);
           setUnreadChat(0);
         }}
+        onOpenAttendance={() => setAttendanceOpen(true)}
         onLeave={onLeave}
+      />
+
+      <AttendancePanel
+        open={attendanceOpen && isStaff}
+        meetingId={session.meetingId}
+        onClose={() => setAttendanceOpen(false)}
+        onError={showToast}
       />
 
       <ChatPanel

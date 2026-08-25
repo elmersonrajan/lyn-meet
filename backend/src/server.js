@@ -10,6 +10,7 @@ const { Server } = require("socket.io");
 const { startWorkers } = require("./mediasoup/workerManager");
 const { attachSocketHandlers } = require("./socket");
 const { RECORDINGS_DIR } = require("./recording/cloudRecorder");
+const attendance = require("./attendance/attendanceLog");
 const { rooms } = require("./mediasoup/roomManager");
 const { createLogger } = require("./utils/logger");
 
@@ -125,6 +126,38 @@ async function main() {
         res.json({ ok: true, ffmpeg, rooms: snapshot, uptime: process.uptime() });
       } catch (err) {
         log.error("/api/debug failed", err);
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
+
+    app.get("/api/attendance", (_req, res) => {
+      try {
+        res.json({ ok: true, meetings: attendance.listMeetings() });
+      } catch (err) {
+        log.error("/api/attendance failed", err);
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
+
+    app.get("/api/attendance/:meetingId", (req, res) => {
+      try {
+        const report = attendance.buildReport(req.params.meetingId);
+        res.json({ ok: true, report });
+      } catch (err) {
+        log.error("/api/attendance/:meetingId failed", err);
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
+
+    app.get("/api/attendance/:meetingId/csv", (req, res) => {
+      try {
+        const report = attendance.buildReport(req.params.meetingId);
+        const name = `attendance_${attendance.safeId(req.params.meetingId)}.csv`;
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+        res.send(attendance.toCsv(report));
+      } catch (err) {
+        log.error("/api/attendance csv failed", err);
         res.status(500).json({ ok: false, error: err.message });
       }
     });

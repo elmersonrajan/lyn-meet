@@ -10,6 +10,7 @@ const {
 } = require("../mediasoup/roomManager");
 const { createLogger } = require("../utils/logger");
 const meetingLog = require("../utils/meetingLog");
+const attendance = require("../attendance/attendanceLog");
 
 const log = createLogger("Socket");
 
@@ -146,6 +147,7 @@ function attachSocketHandlers(io) {
               meetingId,
               peerId: currentTeacher.id,
             });
+            attendance.recordJoin(room.id, currentTeacher, "reconnect");
             ack(callback, joinAck(room, currentTeacher, { reconnected: true }));
             return;
           }
@@ -169,6 +171,7 @@ function attachSocketHandlers(io) {
         } else {
           meetingLog.writeEntry("join-room", { name, role, meetingId, peerId: peer.id });
         }
+        attendance.recordJoin(room.id, peer, "join");
 
         ack(callback, joinAck(room, peer, { reconnected: false }));
       } catch (err) {
@@ -378,6 +381,7 @@ function attachSocketHandlers(io) {
         });
         const sockets = await io.in(room.id).fetchSockets();
         const targetSock = sockets.find((s) => s.data.peerId === target.id);
+        attendance.recordLeave(room.id, target, "removed");
         removePeerFromRoom(room, target, { force: true });
         io.to(room.id).emit("peer-removed", {
           peer: target.public(),
@@ -667,6 +671,10 @@ async function handleDisconnect(io, socket, { voluntary }) {
 
     const wasStaff = peer.role === "teacher" || peer.role === "coordinator";
     const force = voluntary || peer.role !== "teacher";
+    // Recorded before removal, while peer.name/role are still readable. A
+    // teacher inside the grace window counts as gone -- reconnecting opens a
+    // new session, so the gap is visible rather than billed as attendance.
+    attendance.recordLeave(room.id, peer, voluntary ? "left" : "disconnected");
     const result = removePeerFromRoom(room, peer, { force });
 
     if (peer.role === "teacher" && result.keptAlive && !voluntary) {
