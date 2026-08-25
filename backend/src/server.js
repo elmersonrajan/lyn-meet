@@ -77,7 +77,7 @@ async function main() {
       try {
         res.json({
           ok: true,
-          service: "classroom-meet-backend",
+          service: "lyn-meet-backend",
           rooms: rooms.size,
           uptime: process.uptime(),
         });

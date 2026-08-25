@@ -57,7 +57,7 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
   return (
     <div className="lobby">
       <form className="lobby-card" onSubmit={join}>
-        <h1>Classroom Meet</h1>
+        <h1>LYN MEET</h1>
         <p className="lead">Anyone can join first. Students can speak. Coordinator can remove people.</p>
         {error ? <div className="error-banner">{error}</div> : null}
         <div className="field">

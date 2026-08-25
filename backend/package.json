@@ -1,8 +1,8 @@
 {
-  "name": "classroom-meet-backend",
+  "name": "lyn-meet-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "Classroom Meet SFU backend — Express + Socket.IO + mediasoup + cloud recording",
+  "description": "LYN MEET SFU backend — Express + Socket.IO + mediasoup + cloud recording",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

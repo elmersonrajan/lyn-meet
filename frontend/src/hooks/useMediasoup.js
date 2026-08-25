@@ -14,7 +14,8 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
   const [teacherStream, setTeacherStream] = useState(null);
   const [screenStream, setScreenStream] = useState(null);
   const [remoteAudio, setRemoteAudio] = useState([]);
-  const [micOn, setMicOn] = useState(true);
+  // Only the teacher joins live; everyone else arrives muted.
+  const [micOn, setMicOn] = useState(role === "teacher");
   const [camOn, setCamOn] = useState(role === "teacher");
   const [sharing, setSharing] = useState(false);
   const [ready, setReady] = useState(false);
@@ -120,7 +121,13 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
           appData: { source: "audio" },
         });
         producersRef.current.audio = producer;
-        console.log("[Mediasoup] audio producer created", { role });
+        // The server pauses non-teacher audio on produce; kill the local track
+        // too so nothing leaves the machine before that lands.
+        if (role !== "teacher") {
+          audioTrack.enabled = false;
+          setMicOn(false);
+        }
+        console.log("[Mediasoup] audio producer created", { role, muted: role !== "teacher" });
       }
 
       const videoTrack = stream.getVideoTracks()[0];
@@ -236,7 +243,19 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
 
     socket.on("new-producer", onNew);
     socket.on("producer-closed", onClosed);
+    // Applies to students and coordinators alike, unlike mic-locked which is
+    // a students-only rule.
+    const onJoinedMuted = () => {
+      if (role === "teacher") return;
+      console.log("[Mediasoup] joined-muted received");
+      localStream?.getAudioTracks().forEach((t) => {
+        t.enabled = false;
+      });
+      setMicOn(false);
+    };
+
     socket.on("mic-locked", onMicLocked);
+    socket.on("joined-muted", onJoinedMuted);
     socket.on("force-mute", async () => {
       try {
         if (role !== "student") return;
@@ -255,6 +274,7 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
       socket.off("new-producer", onNew);
       socket.off("producer-closed", onClosed);
       socket.off("mic-locked", onMicLocked);
+      socket.off("joined-muted", onJoinedMuted);
       socket.off("force-mute");
     };
   }, [socket, enabled, consumeProducer, localStream, role, publishRemoteAudio]);
