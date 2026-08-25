@@ -6,7 +6,7 @@ import { installClientLogTee } from "./services/debugLog.js";
 
 try {
   installClientLogTee();
-  console.log("[Boot] mounting Classroom Meet frontend");
+  console.log("[Boot] mounting LYN MEET frontend");
   ReactDOM.createRoot(document.getElementById("root")).render(
     <React.StrictMode>
       <App />

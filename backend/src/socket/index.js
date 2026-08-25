@@ -219,10 +219,17 @@ function attachSocketHandlers(io) {
           rtpParameters,
           source: source || kind,
         });
-        if (peer.role === "student" && producer.appData.source === "audio" && !room.hasLiveStaff()) {
+        // Only the teacher arrives live. Students and coordinators join muted
+        // and unmute deliberately. Paused here, before the participants
+        // broadcast below, so nobody is ever listed as unmuted by mistake.
+        if (producer.appData.source === "audio" && peer.role !== "teacher") {
           await room.pauseProducer(peer, "audio");
-          socket.emit("mic-locked", {
-            reason: "Mic stays muted until a teacher or coordinator joins",
+          const locked = peer.role === "student" && !room.hasLiveStaff();
+          socket.emit("joined-muted", {
+            locked,
+            reason: locked
+              ? "You joined muted — you can unmute once a teacher or coordinator is here"
+              : "You joined muted — unmute when you want to speak",
           });
         }
         socket.to(room.id).emit("new-producer", {

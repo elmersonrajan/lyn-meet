@@ -127,6 +127,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       setPolls((prev) => prev.map((p) => (p.id === pollId ? { ...p, totalVotes } : p)));
     };
     const onMicLocked = ({ reason }) => show(reason || "Mic disabled");
+    const onJoinedMuted = ({ reason }) => show(reason || "You joined muted");
     const onHandChanged = (payload) => {
       // Staff get told when a hand goes up; nobody needs a toast for their own.
       if (payload.peerId === session.peer?.id) {
@@ -180,6 +181,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     socket.on("poll-ended", onPollEnded);
     socket.on("poll-vote-count", onPollCount);
     socket.on("mic-locked", onMicLocked);
+    socket.on("joined-muted", onJoinedMuted);
     socket.on("hand-changed", onHandChanged);
     socket.on("hands-cleared", onHandsCleared);
     socket.on("recording-started", onRecStart);
@@ -200,6 +202,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       socket.off("poll-ended", onPollEnded);
       socket.off("poll-vote-count", onPollCount);
       socket.off("mic-locked", onMicLocked);
+      socket.off("joined-muted", onJoinedMuted);
       socket.off("hand-changed", onHandChanged);
       socket.off("hands-cleared", onHandsCleared);
       socket.off("recording-started", onRecStart);

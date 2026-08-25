@@ -1,4 +1,4 @@
-# Classroom Meet
+# LYN MEET
 
 Teacher + students. Whiteboard/chat over Socket.IO. Camera/audio/screen over mediasoup WebRTC. Cloud recording writes **`.mp4`** on the server.
 
@@ -61,5 +61,31 @@ Students do not open ports. Only the office server router.
 
 ## Roles
 
-Teacher: camera, mic, screen, draw, record, mute others, close session.
-Student: see teacher video + hear teacher, mic only, no camera/screen/draw.
+| | Teacher | Coordinator | Student |
+| --- | --- | --- | --- |
+| Camera | yes | no | no |
+| Mic | joins **live** | joins **muted** | joins **muted** |
+| Can unmute | always | always | only while a teacher or coordinator is in the meeting |
+| Screen share | yes | yes | no |
+| Draw / erase | yes | yes | no |
+| Post messages & polls | yes | yes | no — read and vote only |
+| Raise hand | yes | yes | yes |
+| Record, mute all, attendance, close session | yes | yes | no |
+
+Only the teacher arrives with an open mic. Students and coordinators join muted
+and unmute deliberately. A student's unmute is refused server-side when no
+teacher or coordinator is present, and all student mics are muted when the last
+staff member leaves.
+
+## Attendance
+
+In/out times and duration per person, staff-only in the toolbar.
+
+- `GET /api/attendance` — meetings with a log
+- `GET /api/attendance/<meetingId>` — report
+- `GET /api/attendance/<meetingId>/csv` — spreadsheet download
+- Raw event log: `backend/attendance/<meetingId>.jsonl`
+
+A drop and rejoin counts as two sessions and the disconnected gap is excluded
+from the total, so nobody is credited for time they were away. Only meetings
+that ran after this feature was deployed have data.
