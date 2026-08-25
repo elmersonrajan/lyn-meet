@@ -1,6 +1,7 @@
 const config = require("../config/mediasoup");
 const { createRouter } = require("./workerManager");
 const { CloudRecorder } = require("../recording/cloudRecorder");
+const attendance = require("../attendance/attendanceLog");
 const { createLogger } = require("../utils/logger");
 
 const log = createLogger("RoomManager");
@@ -385,6 +386,12 @@ async function closeRoom(room) {
     }
     if (room.recorder && room.recorder.active) {
       await room.stopRecording();
+    }
+    // Anyone still in the room when it closes needs their session ended, or
+    // they would read as permanently present. A peer already marked
+    // disconnected logged its leave on disconnect, so it is skipped here.
+    for (const peer of room.peers.values()) {
+      if (!peer.disconnected) attendance.recordLeave(room.id, peer, "session-closed");
     }
     for (const peer of room.peers.values()) {
       room.closePeerMedia(peer);

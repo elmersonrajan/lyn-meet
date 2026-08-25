@@ -11,6 +11,7 @@ import {
   IconChat,
   IconLeave,
   IconEndSession,
+  IconClipboard,
 } from "./Icons.jsx";
 
 export default function Toolbar({
@@ -29,6 +30,7 @@ export default function Toolbar({
   onCloseSession,
   onOpenPolls,
   onOpenChat,
+  onOpenAttendance,
   onLeave,
 }) {
   const staff = isTeacher || isCoordinator;
@@ -78,6 +80,13 @@ export default function Toolbar({
           >
             <span className="ico">{recording ? <IconStopRecord /> : <IconRecord />}</span>
             {recording ? "Stop Rec" : "Record"}
+          </button>
+
+          <button className="tbtn" onClick={onOpenAttendance} title="In/out times and duration per person">
+            <span className="ico">
+              <IconClipboard />
+            </span>
+            Attendance
           </button>
         </>
       ) : null}

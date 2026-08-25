@@ -185,6 +185,29 @@ export const IconUsers = (p) => (
   </Svg>
 );
 
+export const IconClipboard = (p) => (
+  <Svg {...p}>
+    <path d="M9 3.5h6v3H9z" />
+    <path d="M15 5h2a2 2 0 0 1 2 2v11.5a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2" />
+    <path d="M8.5 11h7M8.5 14.5h7M8.5 18h4" />
+  </Svg>
+);
+
+export const IconDownload = (p) => (
+  <Svg {...p}>
+    <path d="M12 3.5v11" />
+    <path d="M8 11l4 4 4-4" />
+    <path d="M4.5 19.5h15" />
+  </Svg>
+);
+
+export const IconRefresh = (p) => (
+  <Svg {...p}>
+    <path d="M20 11a8 8 0 1 0-2.6 5.9" />
+    <path d="M20 4.5V11h-6" />
+  </Svg>
+);
+
 export const IconUserMinus = (p) => (
   <Svg {...p} size={p?.size || 14}>
     <path d="M14.5 20v-1.5a3.5 3.5 0 0 0-3.5-3.5H6a3.5 3.5 0 0 0-3.5 3.5V20" />

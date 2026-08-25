@@ -13,3 +13,4 @@ frontend/key.pem
 frontend/cert.pem
 backend/.env
 backend/recordings/
+backend/attendance/
