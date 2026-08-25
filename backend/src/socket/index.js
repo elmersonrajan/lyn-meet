@@ -513,6 +513,87 @@ function attachSocketHandlers(io) {
       }
     });
 
+    socket.on("raise-hand", ({ raised }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        if (!room || !peer) throw new Error("Not in a room");
+
+        const next = Boolean(raised);
+        peer.handRaised = next;
+        peer.handRaisedAt = next ? Date.now() : null;
+        log.action("raise-hand", { roomId: room.id, peerId: peer.id, raised: next });
+
+        // Staff need the name to act on it; everyone needs the list refreshed.
+        io.to(room.id).emit("hand-changed", {
+          peerId: peer.id,
+          name: peer.name,
+          role: peer.role,
+          raised: next,
+          at: peer.handRaisedAt,
+        });
+        io.to(room.id).emit("participants", room.participants());
+        ack(callback, { ok: true, raised: next });
+      } catch (err) {
+        log.error("raise-hand failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    socket.on("lower-hand", ({ peerId }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        if (!room || !peer) throw new Error("Not in a room");
+        // Lowering your own hand is always allowed; anyone else's is staff-only.
+        if (peerId && peerId !== peer.id) requireStaff(peer);
+
+        const target = room.peers.get(peerId || peer.id);
+        if (!target) throw new Error("Participant not found");
+        target.handRaised = false;
+        target.handRaisedAt = null;
+        log.action("lower-hand", { roomId: room.id, target: target.id, by: peer.id });
+
+        io.to(room.id).emit("hand-changed", {
+          peerId: target.id,
+          name: target.name,
+          role: target.role,
+          raised: false,
+          loweredBy: target.id === peer.id ? null : peer.name,
+        });
+        io.to(room.id).emit("participants", room.participants());
+        ack(callback, { ok: true });
+      } catch (err) {
+        log.error("lower-hand failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    socket.on("lower-all-hands", (_payload, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        if (!room || !peer) throw new Error("Not in a room");
+        requireStaff(peer);
+
+        let cleared = 0;
+        for (const other of room.peers.values()) {
+          if (other.handRaised) {
+            other.handRaised = false;
+            other.handRaisedAt = null;
+            cleared += 1;
+          }
+        }
+        log.action("lower-all-hands", { roomId: room.id, by: peer.id, cleared });
+        io.to(room.id).emit("hands-cleared", { by: peer.name, cleared });
+        io.to(room.id).emit("participants", room.participants());
+        ack(callback, { ok: true, cleared });
+      } catch (err) {
+        log.error("lower-all-hands failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
     socket.on("create-poll", (payload, callback) => {
       try {
         const room = getRoom(socket.data.roomId);
@@ -675,6 +756,10 @@ async function handleDisconnect(io, socket, { voluntary }) {
     // teacher inside the grace window counts as gone -- reconnecting opens a
     // new session, so the gap is visible rather than billed as attendance.
     attendance.recordLeave(room.id, peer, voluntary ? "left" : "disconnected");
+    // A teacher inside the grace window keeps their Peer, so a raised hand
+    // would otherwise stay up while they are not even connected.
+    peer.handRaised = false;
+    peer.handRaisedAt = null;
     const result = removePeerFromRoom(room, peer, { force });
 
     if (peer.role === "teacher" && result.keptAlive && !voluntary) {

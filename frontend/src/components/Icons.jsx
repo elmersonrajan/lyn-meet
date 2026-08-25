@@ -185,6 +185,23 @@ export const IconUsers = (p) => (
   </Svg>
 );
 
+export const IconHand = (p) => (
+  <Svg {...p}>
+    <path d="M8 11V5.5a1.75 1.75 0 0 1 3.5 0V11" />
+    <path d="M11.5 10.5V4.25a1.75 1.75 0 0 1 3.5 0V11" />
+    <path d="M15 11V6.5a1.75 1.75 0 0 1 3.5 0V14a7 7 0 0 1-7 7h-.5a7 7 0 0 1-7-7v-2a1.75 1.75 0 0 1 3.5 0" />
+  </Svg>
+);
+
+export const IconHandLower = (p) => (
+  <Svg {...p}>
+    <path d="M8 11.5V7a1.75 1.75 0 0 1 3.5 0v4" />
+    <path d="M11.5 11V6a1.75 1.75 0 0 1 3.5 0v5" />
+    <path d="M15 11V8.5a1.75 1.75 0 0 1 3.5 0V14a7 7 0 0 1-7 7h-.5a7 7 0 0 1-7-7v-2a1.75 1.75 0 0 1 3.5 0" />
+    <path d="M3 3l18 18" />
+  </Svg>
+);
+
 export const IconClipboard = (p) => (
   <Svg {...p}>
     <path d="M9 3.5h6v3H9z" />

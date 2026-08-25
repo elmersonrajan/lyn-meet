@@ -28,6 +28,9 @@ class Peer {
     this.audioMuted = false;
     this.videoOff = this.role !== "teacher";
     this.disconnected = false;
+    this.handRaised = false;
+    // Ordering key so staff can answer hands in the order they went up.
+    this.handRaisedAt = null;
     this.joinedAt = Date.now();
   }
 
@@ -39,6 +42,8 @@ class Peer {
       audioMuted: this.audioMuted,
       videoOff: this.videoOff,
       disconnected: this.disconnected,
+      handRaised: this.handRaised,
+      handRaisedAt: this.handRaisedAt,
     };
   }
 }

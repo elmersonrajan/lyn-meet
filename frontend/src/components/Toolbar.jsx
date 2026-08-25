@@ -12,6 +12,8 @@ import {
   IconLeave,
   IconEndSession,
   IconClipboard,
+  IconHand,
+  IconHandLower,
 } from "./Icons.jsx";
 
 export default function Toolbar({
@@ -23,6 +25,8 @@ export default function Toolbar({
   micLocked,
   unreadChat,
   activePoll,
+  handRaised,
+  raisedCount,
   onToggleCam,
   onToggleMic,
   onMuteOthers,
@@ -31,6 +35,8 @@ export default function Toolbar({
   onOpenPolls,
   onOpenChat,
   onOpenAttendance,
+  onToggleHand,
+  onLowerAllHands,
   onLeave,
 }) {
   const staff = isTeacher || isCoordinator;
@@ -63,6 +69,32 @@ export default function Toolbar({
         <span className="ico">{micOn ? <IconMic /> : <IconMicOff />}</span>
         {micLocked ? "Mic Locked" : micOn ? "Mute" : "Unmute"}
       </button>
+
+      <button
+        className={`tbtn ${handRaised ? "raised" : ""}`}
+        onClick={onToggleHand}
+        title={handRaised ? "Lower your hand" : "Raise your hand"}
+        aria-pressed={handRaised}
+      >
+        <span className="ico">
+          <IconHand />
+        </span>
+        {handRaised ? "Lower Hand" : "Raise Hand"}
+      </button>
+
+      {staff && raisedCount > 0 ? (
+        <button
+          className="tbtn attn"
+          onClick={onLowerAllHands}
+          title={`Lower all ${raisedCount} raised hand(s)`}
+        >
+          <span className="ico">
+            <IconHandLower />
+          </span>
+          Lower All
+          <span className="badge">{raisedCount > 9 ? "9+" : raisedCount}</span>
+        </button>
+      ) : null}
 
       {staff ? (
         <>

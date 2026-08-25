@@ -11,7 +11,7 @@ import ScreenShare from "./ScreenShare.jsx";
 import ChatPanel from "./ChatPanel.jsx";
 import RemoteAudio from "./RemoteAudio.jsx";
 import AttendancePanel from "./AttendancePanel.jsx";
-import { IconPen, IconScreen, IconBoard, IconClip } from "./Icons.jsx";
+import { IconPen, IconScreen, IconClip } from "./Icons.jsx";
 
 export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   const { session, isTeacher, isCoordinator, isStaff, setSession } = useUser();
@@ -34,6 +34,10 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   const [toast, setToast] = useState("");
   const [clipUrl, setClipUrl] = useState("");
   const [teacherDisconnected, setTeacherDisconnected] = useState(false);
+
+  const selfId = session.peer?.id;
+  const handRaised = participants.some((p) => p.id === selfId && p.handRaised);
+  const raisedCount = participants.filter((p) => p.handRaised).length;
 
   const staffPresent = participants.some(
     (p) => (p.role === "teacher" || p.role === "coordinator") && !p.disconnected,
@@ -123,6 +127,17 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       setPolls((prev) => prev.map((p) => (p.id === pollId ? { ...p, totalVotes } : p)));
     };
     const onMicLocked = ({ reason }) => show(reason || "Mic disabled");
+    const onHandChanged = (payload) => {
+      // Staff get told when a hand goes up; nobody needs a toast for their own.
+      if (payload.peerId === session.peer?.id) {
+        if (payload.loweredBy) show(`${payload.loweredBy} lowered your hand`);
+        return;
+      }
+      if (isStaff && payload.raised) show(`✋ ${payload.name} raised their hand`);
+    };
+    const onHandsCleared = ({ by, cleared }) => {
+      if (cleared) show(`${by} lowered all hands (${cleared})`);
+    };
     const onRecStart = () => {
       setRecording(true);
       show("Cloud recording started");
@@ -165,6 +180,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     socket.on("poll-ended", onPollEnded);
     socket.on("poll-vote-count", onPollCount);
     socket.on("mic-locked", onMicLocked);
+    socket.on("hand-changed", onHandChanged);
+    socket.on("hands-cleared", onHandsCleared);
     socket.on("recording-started", onRecStart);
     socket.on("recording-stopped", onRecStop);
     socket.on("teacher-disconnected", onTeacherDown);
@@ -183,6 +200,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       socket.off("poll-ended", onPollEnded);
       socket.off("poll-vote-count", onPollCount);
       socket.off("mic-locked", onMicLocked);
+      socket.off("hand-changed", onHandChanged);
+      socket.off("hands-cleared", onHandsCleared);
       socket.off("recording-started", onRecStart);
       socket.off("recording-stopped", onRecStop);
       socket.off("teacher-disconnected", onTeacherDown);
@@ -191,7 +210,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       socket.off("kicked", onKicked);
       socket.off("peer-removed", onRemoved);
     };
-  }, [socket, media, onLeft, setSession, showToast]);
+  }, [socket, media, onLeft, setSession, showToast, isStaff, session.peer?.id]);
 
   const setStage = async (mode) => {
     try {
@@ -231,6 +250,33 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       await media.toggleMic();
     } catch (err) {
       console.error("[MeetingRoom] mic toggle failed", err);
+      showToast(err.message);
+    }
+  };
+
+  const onToggleHand = async () => {
+    try {
+      await emitAck("raise-hand", { raised: !handRaised });
+    } catch (err) {
+      console.error("[MeetingRoom] raise hand failed", err);
+      showToast(err.message);
+    }
+  };
+
+  const onLowerHand = async (peerId) => {
+    try {
+      await emitAck("lower-hand", { peerId });
+    } catch (err) {
+      console.error("[MeetingRoom] lower hand failed", err);
+      showToast(err.message);
+    }
+  };
+
+  const onLowerAllHands = async () => {
+    try {
+      await emitAck("lower-all-hands", {});
+    } catch (err) {
+      console.error("[MeetingRoom] lower all hands failed", err);
       showToast(err.message);
     }
   };
@@ -300,16 +346,12 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
           {recording ? <div className="rec-pill">REC CLOUD</div> : null}
           {isStaff ? (
             <div className="stage-tools">
-              <button className={stageMode === "draw" ? "active" : ""} onClick={() => setStage("draw")}>
+              <button
+                className={stageMode === "draw" || stageMode === "whiteboard" ? "active" : ""}
+                onClick={() => setStage("draw")}
+              >
                 <IconPen size={16} />
                 Draw
-              </button>
-              <button
-                className={stageMode === "whiteboard" ? "active" : ""}
-                onClick={() => setStage("whiteboard")}
-              >
-                <IconBoard size={16} />
-                Whiteboard
               </button>
               <button className={stageMode === "screen" ? "active" : ""} onClick={() => setStage("screen")}>
                 <IconScreen size={16} />
@@ -343,8 +385,9 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
           <Participants
             list={participants}
             canRemove={isStaff}
-            selfId={session.peer?.id}
+            selfId={selfId}
             onRemove={onRemove}
+            onLowerHand={onLowerHand}
           />
         </aside>
       </div>
@@ -358,6 +401,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         micLocked={micLocked}
         unreadChat={unreadChat}
         activePoll={activePoll}
+        handRaised={handRaised}
+        raisedCount={raisedCount}
         onToggleCam={media.toggleCam}
         onToggleMic={onToggleMic}
         onMuteOthers={onMuteOthers}
@@ -373,6 +418,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
           setUnreadChat(0);
         }}
         onOpenAttendance={() => setAttendanceOpen(true)}
+        onToggleHand={onToggleHand}
+        onLowerAllHands={onLowerAllHands}
         onLeave={onLeave}
       />
 

@@ -362,6 +362,56 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .avatar.teacher { background: var(--navy); }
 .avatar.coordinator { background: var(--ok); }
 
+/* ---------- Raised hands ---------- */
+
+.tbtn.raised {
+  background: #fff8ec;
+  border-color: var(--warn);
+  color: #8a5200;
+}
+
+.prow.hand {
+  background: #fff8ec;
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+.prow.hand:hover { background: #fef3de; }
+
+.hand-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  border-radius: 999px;
+  background: var(--warn);
+  color: #fff;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.hand-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid #f0cf9a;
+  border-radius: 8px;
+  background: #fff;
+  color: #8a5200;
+  cursor: pointer;
+}
+.hand-btn:hover:not(:disabled) { background: #fff2da; border-color: var(--warn); }
+.hand-btn:disabled { cursor: default; opacity: 1; }
+
+.hand-order {
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 .kick-btn {
   flex-shrink: 0;
   width: 28px;
