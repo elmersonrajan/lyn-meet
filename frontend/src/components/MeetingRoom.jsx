@@ -37,6 +37,14 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   });
 
   useEffect(() => {
+    if (stageMode === "whiteboard" || stageMode === "draw") {
+      requestAnimationFrame(() => {
+        board.fitCanvas?.();
+      });
+    }
+  }, [stageMode, board]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
@@ -266,13 +274,14 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
             </div>
           ) : null}
           <div className="stage-canvas">
+            <div style={{ display: stageMode === "whiteboard" || stageMode === "draw" ? "block" : "none", width: "100%", height: "100%" }}>
+              <Whiteboard board={board} />
+            </div>
             {stageMode === "screen" && media.screenStream ? (
               <ScreenShare stream={media.screenStream} />
             ) : stageMode === "clip" && clipUrl ? (
               <video className="clip" src={clipUrl} controls autoPlay />
-            ) : (
-              <Whiteboard board={board} />
-            )}
+            ) : null}
           </div>
         </div>
         <aside className="side">
