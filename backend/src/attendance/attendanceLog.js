@@ -150,7 +150,8 @@ function foldSessions(events) {
 
   const keyOf = (e) => `${String(e.name || "").trim().toLowerCase()}::${e.role}`;
 
-  for (const e of events) {
+  for (let i = 0; i < events.length; i += 1) {
+    const e = events[i];
     const key = keyOf(e);
     if (!byPerson.has(key)) {
       byPerson.set(key, {
@@ -163,12 +164,19 @@ function foldSessions(events) {
     const open = person.sessions.find((s) => s.leftAt == null);
 
     if (e.type === "join") {
-      // A join with a session already open means we never saw the leave
-      // (hard kill, lost socket). Close it at the join rather than nesting.
+      // A join while a session is still open means no exit was ever recorded
+      // -- the server was stopped or killed mid-session.
+      //
+      // Closing it at THIS join would credit the entire gap in between, which
+      // is how a 7-minute presence became 4h 48m. Instead it is cut at the last
+      // thing the meeting actually witnessed, so an unprovable session
+      // under-counts rather than inventing hours of attendance.
       if (open) {
-        open.leftAt = e.at;
-        open.durationMs = Math.max(0, e.at - open.joinedAt);
-        open.reason = "assumed-dropped";
+        const lastWitnessed = i > 0 ? events[i - 1].at : open.joinedAt;
+        const end = Math.max(open.joinedAt, Math.min(lastWitnessed, e.at));
+        open.leftAt = end;
+        open.durationMs = Math.max(0, end - open.joinedAt);
+        open.reason = "exit-not-recorded";
       }
       person.sessions.push({
         joinedAt: e.at,
@@ -236,7 +244,12 @@ function buildReport(meetingId, { now = Date.now(), date } = {}) {
       // of attendance, so it is capped at the last thing the log witnessed.
       if (istDate(s.joinedAt) !== todayKey) {
         const end = lastEventAt != null && lastEventAt > s.joinedAt ? lastEventAt : s.joinedAt;
-        return { ...s, leftAt: end, durationMs: Math.max(0, end - s.joinedAt), reason: "not-closed" };
+        return {
+          ...s,
+          leftAt: end,
+          durationMs: Math.max(0, end - s.joinedAt),
+          reason: "exit-not-recorded",
+        };
       }
       return s;
     });
