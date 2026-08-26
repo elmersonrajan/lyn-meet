@@ -39,7 +39,8 @@ function strokePath(ctx, points, cssW, cssH, stroke) {
 
 /**
  * @param {{ socket: any, canDraw: boolean, initial?: any[] }} opts
- * canDraw = teacher OR coordinator (admin)
+ * canDraw = teacher only. Coordinators supervise and may change the stage or
+ * share a screen, but do not write on the board; the server enforces this too.
  */
 export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = [] }) {
   // Back-compat: older callers passed isTeacher

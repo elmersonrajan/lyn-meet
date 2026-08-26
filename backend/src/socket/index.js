@@ -454,7 +454,8 @@ function attachSocketHandlers(io) {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
-        requireStaff(peer);
+        // Teacher only — hiding the palette is not enough on its own.
+        requireTeacher(peer);
         const cw = Number(stroke.canvasWidth) || 1280;
         const ch = Number(stroke.canvasHeight) || 720;
         const normalized = {
@@ -486,7 +487,8 @@ function attachSocketHandlers(io) {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
-        requireStaff(peer);
+        // Clearing is drawing — same restriction as strokes.
+        requireTeacher(peer);
         room.whiteboard = [];
         io.to(room.id).emit("whiteboard-clear");
         ack(callback, { ok: true });
