@@ -139,9 +139,10 @@ async function main() {
       }
     });
 
+    // ?date=DD-MM-YYYY selects one day; omitted, the most recent day is used.
     app.get("/api/attendance/:meetingId", (req, res) => {
       try {
-        const report = attendance.buildReport(req.params.meetingId);
+        const report = attendance.buildReport(req.params.meetingId, { date: req.query.date });
         res.json({ ok: true, report });
       } catch (err) {
         log.error("/api/attendance/:meetingId failed", err);
@@ -151,8 +152,9 @@ async function main() {
 
     app.get("/api/attendance/:meetingId/csv", (req, res) => {
       try {
-        const report = attendance.buildReport(req.params.meetingId);
-        const name = `attendance_${attendance.safeId(req.params.meetingId)}.csv`;
+        const report = attendance.buildReport(req.params.meetingId, { date: req.query.date });
+        const day = String(report.meetingDate || "").replace(/-/g, "");
+        const name = `attendance_${attendance.safeId(req.params.meetingId)}${day ? `_${day}` : ""}.csv`;
         res.setHeader("Content-Type", "text/csv; charset=utf-8");
         res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
         res.send(attendance.toCsv(report));

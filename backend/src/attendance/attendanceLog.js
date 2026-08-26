@@ -94,28 +94,32 @@ function listMeetings() {
     return fs
       .readdirSync(ATTENDANCE_DIR)
       .filter((f) => f.endsWith(".jsonl"))
-      .map((f) => {
+      // One entry per meeting-DAY, not per meeting: a recurring class reuses
+      // its meeting ID, and each day is a separate register.
+      .flatMap((f) => {
         const meetingId = f.replace(/\.jsonl$/, "");
-        const stat = fs.statSync(path.join(ATTENDANCE_DIR, f));
-        // Counting distinct name+role is cheaper than folding full sessions,
-        // and the dropdown only needs a headline figure.
-        const events = readEvents(meetingId);
-        const people = new Set(
-          events.map((e) => `${String(e.name || "").trim().toLowerCase()}::${e.role}`),
-        );
-        const startedAt = events.length ? events[0].at : null;
-        return {
+        const byPerson = foldSessions(readEvents(meetingId));
+        const days = new Map();
+        for (const p of byPerson.values()) {
+          for (const s of p.sessions) {
+            const key = istDate(s.joinedAt);
+            if (!days.has(key)) days.set(key, { startedAt: s.joinedAt, people: new Set() });
+            const d = days.get(key);
+            if (s.joinedAt < d.startedAt) d.startedAt = s.joinedAt;
+            d.people.add(`${p.name.toLowerCase()}::${p.role}`);
+          }
+        }
+        return [...days.entries()].map(([date, d]) => ({
           meetingId,
-          updatedAt: stat.mtimeMs,
-          bytes: stat.size,
-          startedAt,
-          dateLabel: startedAt == null ? "" : istDate(startedAt),
-          startedLabel: startedAt == null ? "" : istTime(startedAt),
-          weekday: startedAt == null ? "" : istWeekday(startedAt),
-          peopleCount: people.size,
-        };
+          date,
+          dateLabel: date,
+          startedAt: d.startedAt,
+          startedLabel: istTime(d.startedAt),
+          weekday: istWeekday(d.startedAt),
+          peopleCount: d.people.size,
+        }));
       })
-      .sort((a, b) => (b.startedAt || b.updatedAt) - (a.startedAt || a.updatedAt));
+      .sort((a, b) => b.startedAt - a.startedAt);
   } catch (err) {
     log.error("listMeetings failed", err);
     return [];
@@ -134,8 +138,14 @@ function listMeetings() {
  * An unclosed session means the person is still in the meeting; its duration is
  * measured to `now` so a live view keeps ticking.
  */
-function buildReport(meetingId, { now = Date.now() } = {}) {
-  const events = readEvents(meetingId);
+/**
+ * Folds the raw event stream into sessions per person, across the whole log.
+ *
+ * Deliberately not filtered by day: a session can open before midnight and
+ * close after it, so the fold needs the complete stream to pair joins with
+ * leaves correctly. Day selection happens afterwards, in buildReport.
+ */
+function foldSessions(events) {
   const byPerson = new Map();
 
   const keyOf = (e) => `${String(e.name || "").trim().toLowerCase()}::${e.role}`;
@@ -177,10 +187,40 @@ function buildReport(meetingId, { now = Date.now() } = {}) {
     }
   }
 
-  // The meeting's own calendar date. Rows carry a date only when they differ
-  // from it, which keeps the table narrow but stays unambiguous across midnight.
-  const meetingStartedAt = events.length ? events[0].at : null;
-  const meetingDate = meetingStartedAt != null ? istDate(meetingStartedAt) : "";
+  return byPerson;
+}
+
+/**
+ * One report per meeting-day.
+ *
+ * A meeting ID reused for a recurring class writes into a single log, so
+ * without this every day would merge into one row and the durations would add
+ * up across dates. Each session is attributed to the calendar day it STARTED,
+ * which keeps a class running past midnight whole and counted on its start day.
+ *
+ * @param {string} meetingId
+ * @param {{ now?: number, date?: string }} opts date is DD-MM-YYYY; defaults
+ *   to the most recent day present in the log.
+ */
+function buildReport(meetingId, { now = Date.now(), date } = {}) {
+  const events = readEvents(meetingId);
+  const byPerson = foldSessions(events);
+  const lastEventAt = events.length ? events[events.length - 1].at : null;
+  const todayKey = istDate(now);
+
+  // Every day the log has attendance for, most recent first.
+  const dayKeys = new Set();
+  for (const p of byPerson.values()) {
+    for (const s of p.sessions) dayKeys.add(istDate(s.joinedAt));
+  }
+  const availableDates = [...dayKeys].sort((a, b) => {
+    const [da, ma, ya] = a.split("-");
+    const [db, mb, yb] = b.split("-");
+    return `${yb}${mb}${db}`.localeCompare(`${ya}${ma}${da}`);
+  });
+
+  const meetingDate = date || availableDates[0] || (events.length ? istDate(events[0].at) : "");
+
   const dateNote = (ms) => {
     if (ms == null) return null;
     const d = istDate(ms);
@@ -188,6 +228,23 @@ function buildReport(meetingId, { now = Date.now() } = {}) {
   };
 
   const people = [...byPerson.values()].map((p) => {
+    // Only sessions that began on the requested day belong to this register.
+    const sessions = p.sessions.filter((s) => istDate(s.joinedAt) === meetingDate).map((s) => {
+      if (s.leftAt != null) return s;
+      // An unclosed session from an earlier day means the server stopped
+      // without recording a departure. Measuring it to now would report days
+      // of attendance, so it is capped at the last thing the log witnessed.
+      if (istDate(s.joinedAt) !== todayKey) {
+        const end = lastEventAt != null && lastEventAt > s.joinedAt ? lastEventAt : s.joinedAt;
+        return { ...s, leftAt: end, durationMs: Math.max(0, end - s.joinedAt), reason: "not-closed" };
+      }
+      return s;
+    });
+    return { ...p, sessions };
+  })
+    // A person with nothing on this day is not part of this day's register.
+    .filter((p) => p.sessions.length > 0)
+    .map((p) => {
     const totalMs = p.sessions.reduce(
       (sum, s) => sum + (s.durationMs != null ? s.durationMs : Math.max(0, now - s.joinedAt)),
       0,
@@ -233,17 +290,24 @@ function buildReport(meetingId, { now = Date.now() } = {}) {
     ? null
     : people.reduce((max, p) => (p.lastLeaveAt && p.lastLeaveAt > max ? p.lastLeaveAt : max), 0) || null;
 
+  // Start of this day's meeting, not of the whole log.
+  const dayStartedAt = people.reduce(
+    (min, p) => (p.firstJoinAt != null && (min == null || p.firstJoinAt < min) ? p.firstJoinAt : min),
+    null,
+  );
+
   return {
     meetingId: String(meetingId),
     generatedAt: now,
     eventCount: events.length,
-    startedAt: meetingStartedAt,
+    availableDates,
+    startedAt: dayStartedAt,
     endedAt,
     timezone: TIMEZONE,
     timezoneLabel: TZ_LABEL,
     meetingDate,
-    meetingWeekday: meetingStartedAt != null ? istWeekday(meetingStartedAt) : "",
-    startedLabel: istTime(meetingStartedAt),
+    meetingWeekday: dayStartedAt != null ? istWeekday(dayStartedAt) : "",
+    startedLabel: istTime(dayStartedAt),
     endedLabel: endedAt == null ? null : istTime(endedAt),
     generatedLabel: istDateTime(now),
     people,
@@ -382,6 +446,7 @@ module.exports = {
   recordLeave,
   readEvents,
   listMeetings,
+  foldSessions,
   buildReport,
   toCsv,
   hhmmss,
