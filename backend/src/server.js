@@ -316,11 +316,51 @@ async function main() {
   }
 }
 
+/**
+ * Record an exit for everyone still in a room before the process goes away.
+ *
+ * Without this, a restart or deploy leaves every open session with no exit
+ * event. The next join hours later then closes it, and the whole gap counts as
+ * attendance -- which is how a few minutes of presence became 4h 48m.
+ *
+ * Uses the synchronous append inside recordLeave deliberately: an async write
+ * would not finish before the process exits. Guarded so a second signal, or a
+ * signal arriving during shutdown, cannot double-write.
+ */
+let shuttingDown = false;
+function punchEveryoneOut(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    let closed = 0;
+    for (const room of rooms.values()) {
+      for (const peer of room.peers.values()) {
+        if (peer.disconnected) continue; // already logged its own exit
+        attendance.recordLeave(room.id, peer, "server-stopped");
+        closed += 1;
+      }
+    }
+    log.info("shutdown: attendance sessions closed", { signal, closed });
+  } catch (err) {
+    log.error("shutdown attendance flush failed", err);
+  }
+}
+
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"]) {
+  process.on(signal, () => {
+    log.info(`received ${signal} — closing attendance sessions`);
+    punchEveryoneOut(signal);
+    process.exit(0);
+  });
+}
+
 process.on("unhandledRejection", (err) => {
   log.error("unhandledRejection", err);
 });
 process.on("uncaughtException", (err) => {
   log.error("uncaughtException", err);
+  // A fatal error is also an exit: close sessions rather than leaving them open.
+  punchEveryoneOut("uncaughtException");
 });
 
 main();
