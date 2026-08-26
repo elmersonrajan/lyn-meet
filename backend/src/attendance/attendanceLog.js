@@ -97,9 +97,25 @@ function listMeetings() {
       .map((f) => {
         const meetingId = f.replace(/\.jsonl$/, "");
         const stat = fs.statSync(path.join(ATTENDANCE_DIR, f));
-        return { meetingId, updatedAt: stat.mtimeMs, bytes: stat.size };
+        // Counting distinct name+role is cheaper than folding full sessions,
+        // and the dropdown only needs a headline figure.
+        const events = readEvents(meetingId);
+        const people = new Set(
+          events.map((e) => `${String(e.name || "").trim().toLowerCase()}::${e.role}`),
+        );
+        const startedAt = events.length ? events[0].at : null;
+        return {
+          meetingId,
+          updatedAt: stat.mtimeMs,
+          bytes: stat.size,
+          startedAt,
+          dateLabel: startedAt == null ? "" : istDate(startedAt),
+          startedLabel: startedAt == null ? "" : istTime(startedAt),
+          weekday: startedAt == null ? "" : istWeekday(startedAt),
+          peopleCount: people.size,
+        };
       })
-      .sort((a, b) => b.updatedAt - a.updatedAt);
+      .sort((a, b) => (b.startedAt || b.updatedAt) - (a.startedAt || a.updatedAt));
   } catch (err) {
     log.error("listMeetings failed", err);
     return [];
@@ -161,6 +177,16 @@ function buildReport(meetingId, { now = Date.now() } = {}) {
     }
   }
 
+  // The meeting's own calendar date. Rows carry a date only when they differ
+  // from it, which keeps the table narrow but stays unambiguous across midnight.
+  const meetingStartedAt = events.length ? events[0].at : null;
+  const meetingDate = meetingStartedAt != null ? istDate(meetingStartedAt) : "";
+  const dateNote = (ms) => {
+    if (ms == null) return null;
+    const d = istDate(ms);
+    return d === meetingDate ? null : d;
+  };
+
   const people = [...byPerson.values()].map((p) => {
     const totalMs = p.sessions.reduce(
       (sum, s) => sum + (s.durationMs != null ? s.durationMs : Math.max(0, now - s.joinedAt)),
@@ -168,15 +194,31 @@ function buildReport(meetingId, { now = Date.now() } = {}) {
     );
     const present = p.sessions.some((s) => s.leftAt == null);
     const leaves = p.sessions.filter((s) => s.leftAt != null);
+    const firstJoinAt = p.sessions.length ? p.sessions[0].joinedAt : null;
+    const lastLeaveAt = leaves.length ? leaves[leaves.length - 1].leftAt : null;
     return {
       name: p.name,
       role: p.role,
       sessionCount: p.sessions.length,
-      sessions: p.sessions,
-      firstJoinAt: p.sessions.length ? p.sessions[0].joinedAt : null,
-      lastLeaveAt: leaves.length ? leaves[leaves.length - 1].leftAt : null,
+      sessions: p.sessions.map((s) => ({
+        ...s,
+        joinedLabel: istTime(s.joinedAt),
+        joinedDateNote: dateNote(s.joinedAt),
+        leftLabel: s.leftAt == null ? null : istTime(s.leftAt),
+        leftDateNote: dateNote(s.leftAt),
+        durationLabel: s.durationMs == null ? null : durationLabel(s.durationMs),
+      })),
+      firstJoinAt,
+      lastLeaveAt,
       totalMs,
       present,
+      // Pre-formatted so the panel and the CSV read the same source.
+      firstJoinLabel: istTime(firstJoinAt),
+      firstJoinDateNote: dateNote(firstJoinAt),
+      lastLeaveLabel: istTime(lastLeaveAt),
+      lastLeaveDateNote: dateNote(lastLeaveAt),
+      durationLabel: durationLabel(totalMs),
+      durationMinutes: minutes(totalMs),
     };
   });
 
@@ -185,11 +227,25 @@ function buildReport(meetingId, { now = Date.now() } = {}) {
     (a, b) => (rank[a.role] ?? 3) - (rank[b.role] ?? 3) || (a.firstJoinAt || 0) - (b.firstJoinAt || 0),
   );
 
+  // Meeting end = the latest departure, but only once nobody is still present.
+  const anyPresent = people.some((p) => p.present);
+  const endedAt = anyPresent
+    ? null
+    : people.reduce((max, p) => (p.lastLeaveAt && p.lastLeaveAt > max ? p.lastLeaveAt : max), 0) || null;
+
   return {
     meetingId: String(meetingId),
     generatedAt: now,
     eventCount: events.length,
-    startedAt: events.length ? events[0].at : null,
+    startedAt: meetingStartedAt,
+    endedAt,
+    timezone: TIMEZONE,
+    timezoneLabel: TZ_LABEL,
+    meetingDate,
+    meetingWeekday: meetingStartedAt != null ? istWeekday(meetingStartedAt) : "",
+    startedLabel: istTime(meetingStartedAt),
+    endedLabel: endedAt == null ? null : istTime(endedAt),
+    generatedLabel: istDateTime(now),
     people,
     totals: {
       people: people.length,
@@ -197,6 +253,73 @@ function buildReport(meetingId, { now = Date.now() } = {}) {
       students: people.filter((p) => p.role === "student").length,
     },
   };
+}
+
+const TIMEZONE = process.env.ATTENDANCE_TIMEZONE || "Asia/Kolkata";
+const TZ_LABEL = process.env.ATTENDANCE_TZ_LABEL || "IST";
+
+/**
+ * Timestamps are stored as epoch milliseconds, which carry no timezone, so all
+ * of this is presentation only -- logs written before this existed still render
+ * correctly.
+ *
+ * Built from formatToParts rather than a locale string: en-GB yields lowercase
+ * "pm" and slashes, en-US yields a different date order. Composing the parts
+ * ourselves pins the output to exactly one format regardless of the host locale
+ * or Node's ICU build.
+ */
+function istParts(ms) {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+    weekday: "long",
+  });
+  const out = {};
+  for (const p of fmt.formatToParts(new Date(ms))) out[p.type] = p.value;
+  return out;
+}
+
+/** 26-08-2026 */
+function istDate(ms) {
+  if (ms == null) return "";
+  const p = istParts(ms);
+  return `${p.day}-${p.month}-${p.year}`;
+}
+
+/** 01:14 AM */
+function istTime(ms) {
+  if (ms == null) return "";
+  const p = istParts(ms);
+  return `${p.hour}:${p.minute} ${String(p.dayPeriod).toUpperCase()}`;
+}
+
+/** 26-08-2026, 01:14 AM */
+function istDateTime(ms) {
+  if (ms == null) return "";
+  return `${istDate(ms)}, ${istTime(ms)}`;
+}
+
+/** Wednesday */
+function istWeekday(ms) {
+  return ms == null ? "" : istParts(ms).weekday;
+}
+
+/** 1h 25m — or 45m under the hour, 0m when there is nothing to show. */
+function durationLabel(ms) {
+  const mins = Math.round(Math.max(0, ms || 0) / 60000);
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function minutes(ms) {
+  return Math.round(Math.max(0, ms || 0) / 60000);
 }
 
 function hhmmss(ms) {
@@ -207,10 +330,6 @@ function hhmmss(ms) {
   return `${h}:${m}:${s}`;
 }
 
-function iso(ms) {
-  return ms == null ? "" : new Date(ms).toISOString();
-}
-
 function csvCell(value) {
   const s = String(value ?? "");
   // Guard both CSV quoting and spreadsheet formula injection via a leading =/+/-/@.
@@ -218,32 +337,45 @@ function csvCell(value) {
   return /[",\n]/.test(escaped) ? `"${escaped.replace(/"/g, '""')}"` : escaped;
 }
 
+/**
+ * Meeting ID and date repeat on every row rather than sitting in a preamble:
+ * a header block above the columns would break any spreadsheet or script that
+ * parses this as plain CSV.
+ */
 function toCsv(report) {
+  const tz = report.timezoneLabel || TZ_LABEL;
   const header = [
+    "Meeting ID",
+    "Date",
     "Name",
     "Role",
+    `In (${tz})`,
+    `Out (${tz})`,
+    "Duration",
+    "Minutes",
     "Sessions",
-    "First In",
-    "Last Out",
-    "Duration (hh:mm:ss)",
-    "Duration (minutes)",
-    "Still Present",
+    "Status",
   ];
   const rows = report.people.map((p) => [
+    report.meetingId,
+    // A row spanning midnight carries its own date so the export stays exact.
+    p.firstJoinDateNote || report.meetingDate,
     p.name,
     p.role,
+    p.firstJoinLabel || "",
+    p.present ? "still in meeting" : p.lastLeaveLabel || "",
+    p.durationLabel,
+    p.durationMinutes,
     p.sessionCount,
-    iso(p.firstJoinAt),
-    iso(p.lastLeaveAt),
-    hhmmss(p.totalMs),
-    Math.round(p.totalMs / 60000),
-    p.present ? "yes" : "no",
+    p.present ? "In meeting" : "Left",
   ]);
   return [header, ...rows].map((r) => r.map(csvCell).join(",")).join("\n");
 }
 
 module.exports = {
   ATTENDANCE_DIR,
+  TIMEZONE,
+  TZ_LABEL,
   safeId,
   recordEvent,
   recordJoin,
@@ -253,4 +385,10 @@ module.exports = {
   buildReport,
   toCsv,
   hhmmss,
+  istDate,
+  istTime,
+  istDateTime,
+  istWeekday,
+  durationLabel,
+  minutes,
 };

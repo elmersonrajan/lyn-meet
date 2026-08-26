@@ -927,14 +927,71 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .att-actions .att-dl:hover { background: var(--tint); }
 .att-actions .att-close { width: 32px; padding: 0; justify-content: center; color: var(--muted); }
 
-.att-summary {
-  margin: 0;
-  padding: 10px 14px;
+.att-select {
+  height: 32px;
+  max-width: 240px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--navy);
   font-size: 12.5px;
-  color: var(--muted);
-  border-bottom: 1px solid #eef2f8;
+  font-weight: 600;
+  padding: 0 6px;
+  cursor: pointer;
 }
-.att-summary strong { color: var(--navy); }
+
+/* Report header: meeting identity travels with the data, not just the title. */
+.att-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 18px;
+  padding: 11px 14px;
+  background: #fbfcfe;
+  border-bottom: 1px solid #e6ecf5;
+}
+.att-meta-row { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; min-width: 0; }
+.att-meta-row.wide { grid-column: 1 / -1; }
+.att-k {
+  flex: 0 0 84px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.att-v { color: #122033; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.att-v.mono { font-family: "Consolas", ui-monospace, monospace; font-weight: 700; }
+.att-v strong { color: var(--navy); }
+.att-sub { color: var(--muted); font-weight: 500; }
+
+.att-table td.dim { color: var(--muted); }
+
+/* Only shown when a row's date differs from the meeting date (past midnight). */
+.att-daytag {
+  display: inline-block;
+  margin-left: 6px;
+  border-radius: 5px;
+  background: #fff3d9;
+  color: #8a5200;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.att-inmeet { color: var(--ok); font-weight: 600; }
+
+.att-status {
+  display: inline-block;
+  border-radius: 999px;
+  background: #eef2f8;
+  color: var(--muted);
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.att-status.in { background: #e4f5ea; color: var(--ok); }
 
 .att-scroll { flex: 1; overflow: auto; min-height: 0; }
 
@@ -1012,6 +1069,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 @media (max-width: 640px) {
   .att-modal { max-height: 88vh; }
   .att-head { flex-wrap: wrap; }
+  .att-actions { flex-wrap: wrap; }
+  .att-select { max-width: 100%; flex: 1 1 100%; order: -1; }
+  .att-meta { grid-template-columns: 1fr; }
   .att-table td, .att-table th { padding: 8px 8px; font-size: 12px; }
   .att-foot { font-size: 11px; }
 }
