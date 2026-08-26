@@ -436,6 +436,80 @@ function toCsv(report) {
   return [header, ...rows].map((r) => r.map(csvCell).join(",")).join("\n");
 }
 
+/**
+ * The raw .jsonl is written for machines: epoch timestamps, one object per
+ * line. This renders the same events as an aligned plain-text log so a human
+ * can read what happened without parsing JSON.
+ *
+ * Read-only and derived on request -- the stored format is untouched.
+ */
+function toText(meetingId, { date } = {}) {
+  const all = readEvents(meetingId);
+  const events = date ? all.filter((e) => istDate(e.at) === date) : all;
+
+  const rows = events.map((e) => ({
+    date: istDate(e.at),
+    time: istTime(e.at),
+    what: e.type === "join" ? "JOIN" : "LEAVE",
+    name: String(e.name || "(unnamed)"),
+    role: String(e.role || ""),
+    reason: String(e.reason || ""),
+  }));
+
+  const width = (key, min) => Math.max(min, ...rows.map((r) => r[key].length), 0);
+  const wName = width("name", 4);
+  const wRole = width("role", 4);
+
+  const out = [];
+  out.push(`Attendance log — ${meetingId}`);
+  out.push(date ? `Day: ${date}` : "All days");
+  out.push(`Times: ${TZ_LABEL} (${TIMEZONE})`);
+  out.push(`Events: ${rows.length}`);
+  out.push("");
+
+  if (!rows.length) {
+    out.push("(no events recorded)");
+    return `${out.join("\n")}\n`;
+  }
+
+  // Repeat the date only when it changes, so a multi-day log stays scannable.
+  let lastDate = null;
+  for (const r of rows) {
+    if (r.date !== lastDate) {
+      if (lastDate !== null) out.push("");
+      out.push(`${r.date}`);
+      out.push("-".repeat(r.date.length));
+      lastDate = r.date;
+    }
+    out.push(
+      `  ${r.time}   ${r.what.padEnd(5)}  ${r.name.padEnd(wName)}  ${r.role.padEnd(wRole)}  ${r.reason}`,
+    );
+  }
+
+  // A short tally so the file answers "who and how long" without the panel.
+  // A report covers exactly one day, so an all-days view needs one per day --
+  // otherwise the events would list every day while the summary showed one.
+  const days = date ? [date] : buildReport(meetingId).availableDates;
+  for (const day of days) {
+    const report = buildReport(meetingId, { date: day });
+    out.push("");
+    out.push(days.length > 1 ? `Summary — ${day}` : "Summary");
+    out.push("-".repeat(days.length > 1 ? `Summary — ${day}`.length : 7));
+    if (!report.people.length) {
+      out.push("  (nobody recorded)");
+      continue;
+    }
+    for (const p of report.people) {
+      out.push(
+        `  ${p.name.padEnd(wName)}  ${p.role.padEnd(wRole)}  ${String(p.durationLabel).padEnd(8)}` +
+          `  ${p.sessionCount} session${p.sessionCount === 1 ? "" : "s"}` +
+          `${p.present ? "  (still in meeting)" : ""}`,
+      );
+    }
+  }
+  return `${out.join("\n")}\n`;
+}
+
 module.exports = {
   ATTENDANCE_DIR,
   TIMEZONE,
@@ -449,6 +523,7 @@ module.exports = {
   foldSessions,
   buildReport,
   toCsv,
+  toText,
   hhmmss,
   istDate,
   istTime,

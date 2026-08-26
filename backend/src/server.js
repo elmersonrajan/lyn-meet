@@ -150,6 +150,19 @@ async function main() {
       }
     });
 
+    // Human-readable rendering of the raw event log. Opens in a browser as
+    // plain text; ?date=DD-MM-YYYY narrows it to one day.
+    app.get("/api/attendance/:meetingId/log", (req, res) => {
+      try {
+        const text = attendance.toText(req.params.meetingId, { date: req.query.date });
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.send(text);
+      } catch (err) {
+        log.error("/api/attendance/:meetingId/log failed", err);
+        res.status(500).type("text/plain").send(`Error: ${err.message}\n`);
+      }
+    });
+
     app.get("/api/attendance/:meetingId/csv", (req, res) => {
       try {
         const report = attendance.buildReport(req.params.meetingId, { date: req.query.date });
