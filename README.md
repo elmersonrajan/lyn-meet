@@ -67,7 +67,7 @@ Students do not open ports. Only the office server router.
 | Mic | joins **live** | joins **muted** | joins **muted** |
 | Can unmute | always | always | only while a teacher or coordinator is in the meeting |
 | Screen share | yes | yes | no |
-| Draw / erase | yes | yes | no |
+| Draw / erase | yes | no | no |
 | Post messages & polls | yes | yes | no — read and vote only |
 | Raise hand | yes | yes | yes |
 | Record, mute all, attendance, close session | yes | yes | no |

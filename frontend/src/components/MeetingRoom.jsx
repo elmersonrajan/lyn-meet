@@ -59,7 +59,9 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
 
   const board = useWhiteboard({
     socket,
-    canDraw: isStaff,
+    // Teacher only. A coordinator supervises and can still change the stage or
+    // share a screen, but does not write on the board.
+    canDraw: isTeacher,
     initial: joinPayload.whiteboard || [],
   });
 
