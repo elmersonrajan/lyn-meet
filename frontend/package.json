@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host --port 5173",
     "build": "vite build",
-    "preview": "vite preview --host --port 5173"
+    "preview": "vite preview --host --port 5173",
+    "check": "node scripts/check-jsx.cjs"
   },
   "dependencies": {
     "mediasoup-client": "^3.8.1",
