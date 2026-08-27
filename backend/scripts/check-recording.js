@@ -22,6 +22,7 @@ const { spawnSync } = require("child_process");
 const { buildComposeArgs, buildSdp, buildIngestArgs } = require("../src/recording/ffmpegArgs");
 const { recordingFileName, dateStamp } = require("../src/recording/recordingName");
 const { writeBoardFrame } = require("../src/recording/whiteboardFrame");
+const { probeMedia, hasTool } = require("../src/recording/probeMedia");
 
 let pass = 0;
 let fail = 0;
@@ -43,43 +44,25 @@ function run(cmd, args, label) {
   return { ok: res.status === 0, out, status: res.status };
 }
 
-function have(cmd) {
-  return spawnSync(cmd, ["-version"], { encoding: "utf8" }).status === 0;
-}
-
-function probe(file) {
-  const res = run("ffprobe", [
-    "-v", "error",
-    "-show_entries", "stream=codec_type,width,height:format=duration",
-    "-of", "json", file,
-  ]);
-  if (!res.ok) return null;
-  try {
-    const parsed = JSON.parse(res.out);
-    const streams = parsed.streams || [];
-    return {
-      video: streams.filter((s) => s.codec_type === "video").length,
-      audio: streams.filter((s) => s.codec_type === "audio").length,
-      width: streams.find((s) => s.codec_type === "video")?.width,
-      height: streams.find((s) => s.codec_type === "video")?.height,
-      duration: Number(parsed.format?.duration || 0),
-    };
-  } catch {
-    return null;
-  }
-}
+const probe = (file) => probeMedia(file);
 
 function main() {
   console.log("\nRecording pipeline check\n");
 
   console.log("0. tools");
-  const hasFfmpeg = have("ffmpeg");
-  const hasFfprobe = have("ffprobe");
+  const hasFfmpeg = hasTool("ffmpeg");
   ok("ffmpeg present", hasFfmpeg, "install with: sudo dnf install ffmpeg");
-  ok("ffprobe present", hasFfprobe, "ffprobe ships with ffmpeg; the recorder uses it to inspect captures");
-  if (!hasFfmpeg || !hasFfprobe) {
-    console.log("\nCannot continue without ffmpeg and ffprobe.\n");
+  if (!hasFfmpeg) {
+    console.log("\nCannot continue without ffmpeg.\n");
     process.exit(1);
+  }
+  // ffprobe is packaged separately in some distributions. It is preferred but
+  // not required — stream details fall back to parsing `ffmpeg -i` output.
+  if (hasTool("ffprobe")) {
+    pass += 1;
+    console.log("  PASS  ffprobe present");
+  } else {
+    console.log("  NOTE  ffprobe not installed — using ffmpeg -i for stream details");
   }
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lyn-rec-check-"));
@@ -101,7 +84,7 @@ function main() {
     ]);
     ok("synthetic capture created", gen.ok && fs.existsSync(live), gen.out.slice(-300));
     const liveInfo = probe(live);
-    ok("capture has 2 video + 1 audio", liveInfo?.video === 2 && liveInfo?.audio === 1, JSON.stringify(liveInfo));
+    ok("capture has 2 video + 1 audio", liveInfo?.videoCount === 2 && liveInfo?.audioCount === 1, JSON.stringify(liveInfo));
 
     // ---- Real whiteboard frames, written by the shipped renderer, numbered
     // from zero exactly as the recorder numbers them.
@@ -133,8 +116,8 @@ function main() {
     const size1 = fs.existsSync(out1) ? fs.statSync(out1).size : 0;
     ok("output is not 0 bytes", size1 > 2000, `size=${size1} bytes`);
     const i1 = probe(out1);
-    ok("output has video", (i1?.video || 0) >= 1, JSON.stringify(i1));
-    ok("output has audio", (i1?.audio || 0) >= 1, JSON.stringify(i1));
+    ok("output has video", (i1?.videoCount || 0) >= 1, JSON.stringify(i1));
+    ok("output has audio", (i1?.audioCount || 0) >= 1, JSON.stringify(i1));
     ok("output is the layout size", i1?.width === 1280 && i1?.height === 720, `${i1?.width}x${i1?.height}`);
     // Audio and video should span the same time; a large gap is the drift
     // symptom this pipeline exists to avoid.
@@ -150,7 +133,7 @@ function main() {
     ok("ffmpeg exited cleanly", r2.ok, r2.out.slice(-500));
     const i2 = probe(out2);
     ok("output is playable", (fs.existsSync(out2) ? fs.statSync(out2).size : 0) > 2000);
-    ok("has video and audio", (i2?.video || 0) >= 1 && (i2?.audio || 0) >= 1, JSON.stringify(i2));
+    ok("has video and audio", (i2?.videoCount || 0) >= 1 && (i2?.audioCount || 0) >= 1, JSON.stringify(i2));
 
     // ---- Layout 3: audio only, no camera and no screen.
     console.log("\n5. compose — board only, no camera");
