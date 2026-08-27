@@ -5,6 +5,7 @@ const { createLogger } = require("../utils/logger");
 const { writeBoardFrame } = require("./whiteboardFrame");
 const { resolveOutputPath } = require("./recordingName");
 const { buildSdp, buildIngestArgs, buildComposeArgs } = require("./ffmpegArgs");
+const { probeMedia } = require("./probeMedia");
 
 const log = createLogger("CloudRecorder");
 
@@ -62,45 +63,6 @@ function runFfmpeg(args, label) {
 }
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/**
- * Reads the streams that actually landed in the captured file.
- *
- * Attaching a producer does not guarantee a stream: a camera that was off, or a
- * screen share that stopped, sends no RTP and leaves no track behind. Building
- * the layout from what was *attached* rather than what arrived makes the filter
- * graph reference a stream that does not exist, and ffmpeg then writes a 0-byte
- * output. So the file is asked what it contains.
- */
-function probeStreams(filePath) {
-  return new Promise((resolve) => {
-    const proc = spawn(
-      "ffprobe",
-      ["-v", "error", "-show_entries", "stream=index,codec_type", "-of", "csv=p=0", filePath],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
-    let out = "";
-    proc.stdout.on("data", (c) => (out += String(c)));
-    proc.on("error", (err) => {
-      log.warn("ffprobe unavailable — falling back to attached streams", err.message);
-      resolve(null);
-    });
-    proc.on("exit", () => {
-      const types = out
-        .split("\n")
-        .map((line) => line.trim().split(",")[1])
-        .filter(Boolean);
-      if (!types.length) {
-        resolve(null);
-        return;
-      }
-      resolve({
-        videoCount: types.filter((t) => t === "video").length,
-        hasAudio: types.includes("audio"),
-      });
-    });
-  });
-}
 
 /**
  * Server-side recording: one composed MP4 per session containing the whiteboard
@@ -324,7 +286,8 @@ class CloudRecorder {
 
     // Trust the file over our own bookkeeping: clamp the declared stream
     // indexes to the streams that actually arrived.
-    const probe = await probeStreams(this.livePath);
+    // ffprobe is absent on some installs, so this falls back to ffmpeg -i.
+    const probe = probeMedia(this.livePath);
     let camIndex = this.camIndex;
     let screenIndex = this.screenIndex;
     let hasAudio = this.hasAudio;
