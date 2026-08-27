@@ -11,6 +11,7 @@ import ScreenShare from "./ScreenShare.jsx";
 import ChatPanel from "./ChatPanel.jsx";
 import RemoteAudio from "./RemoteAudio.jsx";
 import AttendancePanel from "./AttendancePanel.jsx";
+import MeetingInfo from "./MeetingInfo.jsx";
 import { IconPen, IconScreen, IconClip } from "./Icons.jsx";
 
 export default function MeetingRoom({ socket, joinPayload, onLeft }) {
@@ -381,6 +382,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
           </div>
         </div>
         <aside className="side">
+          <MeetingInfo meetingId={session.meetingId} onToast={showToast} />
           <InstructorVideo
             stream={isTeacher ? media.localStream : media.teacherStream}
             name={teacherName}

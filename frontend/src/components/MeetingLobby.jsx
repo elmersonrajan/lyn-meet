@@ -1,6 +1,9 @@
 import React, { useState } from "react";
 import { useUser } from "../context/UserContext.jsx";
 import { getSocket, emitAck } from "../services/socket.js";
+import { readMeetingIdFromUrl, generateMeetingCode } from "../services/meetingLink.js";
+import ShareLink from "./ShareLink.jsx";
+import { IconShuffle } from "./Icons.jsx";
 
 const ROLES = [
   { id: "student", label: "Student" },
@@ -10,10 +13,17 @@ const ROLES = [
 
 export default function MeetingLobby({ onJoined, onJoinPayload }) {
   const { session, setSession } = useUser();
+  // Read once on mount: an invite link fills the meeting for the person who
+  // clicked it, so they only have to type their name.
+  const [invited] = useState(() => readMeetingIdFromUrl());
   const [name, setName] = useState(session.name || "");
-  const [meetingId, setMeetingId] = useState(session.meetingId || "");
+  const [meetingId, setMeetingId] = useState(session.meetingId || invited || "");
+  // A link never carries a role. Anyone arriving by link is a student, and
+  // staff pick their role by hand -- otherwise a forwarded link would hand out
+  // teacher access to whoever opened it.
   const [role, setRole] = useState(session.role || "student");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
 
   const join = async (e) => {
@@ -60,6 +70,7 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
         <h1>LYN MEET</h1>
         <p className="lead">LOVE YOUR NEIGHBOURHOOD's - ONLINE CLASSROOM</p>
         {error ? <div className="error-banner">{error}</div> : null}
+        {notice ? <div className="notice-banner">{notice}</div> : null}
         <div className="field">
           <label htmlFor="name">Name</label>
           <input
@@ -72,14 +83,35 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
         </div>
         <div className="field">
           <label htmlFor="mid">Meeting ID</label>
-          <input
-            id="mid"
-            value={meetingId}
-            onChange={(e) => setMeetingId(e.target.value)}
-            placeholder="e.g. math-101"
-            required
-          />
+          <div className="mid-row">
+            <input
+              id="mid"
+              value={meetingId}
+              onChange={(e) => setMeetingId(e.target.value)}
+              placeholder="e.g. math-101"
+              required
+            />
+            <button
+              type="button"
+              className="gen-btn"
+              onClick={() => setMeetingId(generateMeetingCode())}
+              title="Generate a random meeting code"
+            >
+              <IconShuffle size={15} />
+              New code
+            </button>
+          </div>
+          {invited && meetingId === invited ? (
+            <p className="field-note">Meeting filled in from your invite link.</p>
+          ) : null}
         </div>
+
+        {meetingId.trim() ? (
+          <div className="field">
+            <label>Invite link</label>
+            <ShareLink meetingId={meetingId.trim()} variant="full" onCopied={setNotice} />
+          </div>
+        ) : null}
         <div className="role-row three">
           {ROLES.map((r) => (
             <button
