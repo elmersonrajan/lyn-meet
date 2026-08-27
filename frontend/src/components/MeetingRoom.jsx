@@ -12,6 +12,7 @@ import ChatPanel from "./ChatPanel.jsx";
 import RemoteAudio from "./RemoteAudio.jsx";
 import AttendancePanel from "./AttendancePanel.jsx";
 import MeetingInfo from "./MeetingInfo.jsx";
+import { buildMeetingLink, copyText, syncUrlToMeeting } from "../services/meetingLink.js";
 import { IconPen, IconScreen, IconClip } from "./Icons.jsx";
 
 export default function MeetingRoom({ socket, joinPayload, onLeft }) {
@@ -35,6 +36,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   const [toast, setToast] = useState("");
   const [clipUrl, setClipUrl] = useState("");
   const [teacherDisconnected, setTeacherDisconnected] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const selfId = session.peer?.id;
   const handRaised = participants.some((p) => p.id === selfId && p.handRaised);
@@ -260,6 +262,25 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     }
   };
 
+  // A teacher who typed the meeting ID rather than following a link would
+  // otherwise sit on a bare origin with nothing shareable in the address bar.
+  useEffect(() => {
+    syncUrlToMeeting(session.meetingId);
+  }, [session.meetingId]);
+
+  const onCopyLink = async () => {
+    const link = buildMeetingLink(session.meetingId);
+    if (!link) return;
+    const ok = await copyText(link);
+    if (!ok) {
+      showToast("Could not copy — the link is in your address bar");
+      return;
+    }
+    setLinkCopied(true);
+    showToast(`Invite link copied — ${link}`);
+    setTimeout(() => setLinkCopied(false), 2000);
+  };
+
   const onToggleHand = async () => {
     try {
       await emitAck("raise-hand", { raised: !handRaised });
@@ -382,7 +403,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
           </div>
         </div>
         <aside className="side">
-          <MeetingInfo meetingId={session.meetingId} onToast={showToast} />
+          <MeetingInfo meetingId={session.meetingId} />
           <InstructorVideo
             stream={isTeacher ? media.localStream : media.teacherStream}
             name={teacherName}
@@ -427,6 +448,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         onOpenAttendance={() => setAttendanceOpen(true)}
         onToggleHand={onToggleHand}
         onLowerAllHands={onLowerAllHands}
+        onCopyLink={onCopyLink}
+        linkCopied={linkCopied}
         onLeave={onLeave}
       />
 

@@ -99,6 +99,30 @@ export function buildMeetingLink(meetingId, origin) {
 }
 
 /**
+ * Rewrites the address bar to the shareable form once a meeting is joined.
+ *
+ * A teacher who typed the meeting ID rather than following a link would
+ * otherwise be left on a bare origin, with nothing to copy out of the address
+ * bar. replaceState is used rather than pushState so the browser Back button
+ * still leaves the meeting instead of stepping through URL edits.
+ *
+ * @returns {string} the URL now shown, or "" if nothing was changed
+ */
+export function syncUrlToMeeting(meetingId, win = typeof window !== "undefined" ? window : null) {
+  try {
+    if (!win?.history?.replaceState) return "";
+    const link = buildMeetingLink(meetingId, win.location?.origin);
+    if (!link) return "";
+    if (win.location?.href === link) return link;
+    win.history.replaceState(null, "", link);
+    return link;
+  } catch (err) {
+    console.error("[meetingLink] could not sync the address bar", err);
+    return "";
+  }
+}
+
+/**
  * Generates a Meet-style code, e.g. kfd-8mza-qtp.
  *
  * Note this is obscurity, not security: the app has no authentication, so a
