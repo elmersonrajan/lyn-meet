@@ -1,8 +1,7 @@
 import React, { useState } from "react";
 import { useUser } from "../context/UserContext.jsx";
 import { getSocket, emitAck } from "../services/socket.js";
-import { readMeetingIdFromUrl, generateMeetingCode } from "../services/meetingLink.js";
-import { IconShuffle } from "./Icons.jsx";
+import { readMeetingIdFromUrl } from "../services/meetingLink.js";
 
 const ROLES = [
   { id: "student", label: "Student" },
@@ -21,6 +20,10 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
   // staff pick their role by hand -- otherwise a forwarded link would hand out
   // teacher access to whoever opened it.
   const [role, setRole] = useState(session.role || "student");
+  // A coordinator is an office role rather than a person, so the name is fixed.
+  // The server applies the same rule, so this is convenience, not the control.
+  const isCoordinator = role === "coordinator";
+  const effectiveName = isCoordinator ? "ADMIN" : name;
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -29,7 +32,7 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
     try {
       setError("");
       setBusy(true);
-      console.log("[Lobby] join clicked", { name, meetingId, role });
+      console.log("[Lobby] join clicked", { name: effectiveName, meetingId, role });
       const socket = getSocket();
       if (!socket.connected) socket.connect();
 
@@ -44,9 +47,9 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
         });
       await waitConnect();
 
-      const res = await emitAck("join-room", { name, meetingId, role });
+      const res = await emitAck("join-room", { name: effectiveName, meetingId, role });
       setSession({
-        name,
+        name: effectiveName,
         meetingId,
         role,
         peer: res.peer,
@@ -72,32 +75,25 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
           <label htmlFor="name">Name</label>
           <input
             id="name"
-            value={name}
+            value={isCoordinator ? "ADMIN" : name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Your display name"
-            required
+            readOnly={isCoordinator}
+            required={!isCoordinator}
           />
+          {isCoordinator ? (
+            <p className="field-note">Coordinators always appear as ADMIN.</p>
+          ) : null}
         </div>
         <div className="field">
           <label htmlFor="mid">Meeting ID</label>
-          <div className="mid-row">
-            <input
-              id="mid"
-              value={meetingId}
-              onChange={(e) => setMeetingId(e.target.value)}
-              placeholder="e.g. math-101"
-              required
-            />
-            <button
-              type="button"
-              className="gen-btn"
-              onClick={() => setMeetingId(generateMeetingCode())}
-              title="Generate a random meeting code"
-            >
-              <IconShuffle size={15} />
-              New code
-            </button>
-          </div>
+          <input
+            id="mid"
+            value={meetingId}
+            onChange={(e) => setMeetingId(e.target.value)}
+            placeholder="e.g. math-101"
+            required
+          />
           {invited && meetingId === invited ? (
             <p className="field-note">Meeting filled in from your invite link.</p>
           ) : null}

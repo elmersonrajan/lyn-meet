@@ -12,17 +12,48 @@ Ports: backend **5000**, frontend **5173**.
 | `[RoomManager] transport ICE candidates` | Server tells Chrome `ip:port` for video (e.g. 59.96.57.40:43845) |
 | `[RoomManager] ICE CONNECTED` | Camera path is OPEN |
 | `[RoomManager] ICE FAILED` | UDP/TCP **40000–49000** not reaching this PC **1:1** (router) |
-| `[CloudRecorder] cloud recording started` | ffmpeg writing `backend/recordings/<meetingId>_rec_*.mp4` |
+| `[CloudRecorder] cloud recording started` | ffmpeg capturing; the composed `.mp4` is written when you stop |
 | Browser `send failed` / `recv failed` | Same as ICE FAILED — not a React bug |
 
 ## Record → mp4
 
+Server-side recording. One composed file per session:
+
+- **Main area** — the shared screen when one is being shared, otherwise the whiteboard
+- **Inset** — the teacher camera, small, bottom-right
+- **Audio** — the teacher microphone
+
+File name is the meeting ID and the date: `10maths_27AUG26.mp4`. A second
+recording of the same class on the same day becomes `..._2.mp4`.
+
 1. Teacher camera/mic on.
-2. Click **Start Record**.
-3. File: `backend/recordings/<meetingId>_rec_<id>.mp4`
+2. Click **Record**.
+3. File: `backend/recordings/<meetingId>_<DDMMMYY>.mp4`
 4. List: `http://59.96.57.40:5000/api/recordings`
 5. Needs **ffmpeg** on the server: `sudo dnf install ffmpeg` (or `apt install ffmpeg`)
 6. If teacher internet drops, recording **keeps running** for 120s (reconnect).
+
+Capture and layout are two stages. One ffmpeg process ingests every RTP stream
+through a single SDP into one Matroska file, so audio, camera and screen share
+one clock; at stop, that file plus the whiteboard frames are composed into the
+final MP4. Only the video track is rebuilt, so the layout pass cannot disturb
+the audio timing. Intermediates are deleted only after the final file exists.
+
+Tuning: `RECORDING_WIDTH`, `RECORDING_HEIGHT`, `RECORDING_FPS`,
+`RECORDING_BOARD_FPS`, `RECORDING_WARMUP_MS`, `RECORDING_TIMEZONE`.
+
+## Idle meetings close themselves
+
+The server reclaims rooms nobody is using, so a forgotten tab does not hold a
+mediasoup Router and its RTP ports open:
+
+| Condition | Closed after |
+| --- | --- |
+| Nobody in the meeting | 15 minutes |
+| Only one person in the meeting | 20 minutes |
+
+A peer inside the teacher reconnect window does not count as present. Tune with
+`IDLE_EMPTY_MS`, `IDLE_SOLO_MS`, `IDLE_CHECK_MS`.
 
 ## Run
 
@@ -70,7 +101,12 @@ Students do not open ports. Only the office server router.
 | Draw / erase | yes | no | no |
 | Post messages & polls | yes | yes | no — read and vote only |
 | Raise hand | yes | yes | yes |
-| Record, mute all, attendance, close session | yes | yes | no |
+| Record, mute all, close session | yes | yes | no |
+| View attendance | no | **yes** | no |
+
+Coordinators always appear as **ADMIN**; the name is fixed on the server, not
+just in the lobby, so the participant list, attendance and announcements read
+the same whoever is covering the role.
 
 Only the teacher arrives with an open mic. Students and coordinators join muted
 and unmute deliberately. A student's unmute is refused server-side when no
@@ -85,30 +121,23 @@ Share a meeting with a link instead of dictating the ID:
 https://59.96.57.40:5173/?lynmeet=math-101
 ```
 
-**Copy link** is a staff-only button in the in-meeting toolbar, beside Announce.
-Opening the link fills the meeting in; the person only types their name.
-
-After joining, the address bar is rewritten to the shareable form, so a teacher
-who typed the meeting ID can also copy the link straight out of the browser.
+Opening the link fills the meeting in; the person only types their name. After
+joining, the address bar is rewritten to the shareable form, so the link can be
+copied straight out of the browser.
 
 A link never carries a role — anyone arriving by link lands on Student, and
 staff pick Teacher or Coordinator by hand, so a forwarded link cannot hand out
 teacher access.
-
-**New code** in the lobby generates a Meet-style code such as `kfd-8mza-qtp`,
-avoiding characters that are easy to confuse (`0`/`o`, `1`/`l`). This is
-obscurity, not security: there is no authentication, so it only stops casual
-guessing of short IDs like `1`. You can still type your own ID.
 
 These forms are all accepted when reading a link, so nothing breaks if a link
 is written by hand:
 
 | Form | Note |
 | --- | --- |
-| `/?lynmeet=<id>` | what **Copy link** produces; always works |
+| `/?lynmeet=<id>` | what the address bar shows; always works |
 | `/?meeting=<id>`, `/?meetingId=<id>`, `/?id=<id>` | aliases |
 | `/lynmeet=<id>`, `/join/<id>`, `/m/<id>` | path forms |
-| `/<code>` | only when it matches a generated code |
+| `/<code>` | only when it matches a `xxx-xxxx-xxx` code |
 
 Path forms need the server to serve `index.html` for unknown paths. The Vite dev
 server does this already; behind nginx add `try_files $uri /index.html;`. The
@@ -116,7 +145,8 @@ query form needs no server configuration at all, which is why it is the default.
 
 ## Attendance
 
-In/out times and duration per person, staff-only in the toolbar.
+In/out times and duration per person. The Attendance button is visible to the
+**coordinator only** — not to teachers.
 
 - `GET /api/attendance` — meetings with a log
 - `GET /api/attendance/<meetingId>` — report

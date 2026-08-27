@@ -31,6 +31,17 @@ function uuid() {
   }
 }
 
+/**
+ * A coordinator is an office role, not a person: the name is fixed so the
+ * participant list, attendance and announcements all read the same regardless
+ * of who is covering. Enforced here, not just hidden in the lobby.
+ */
+const COORDINATOR_NAME = "ADMIN";
+
+function displayNameFor(role, typedName) {
+  return role === "coordinator" ? COORDINATOR_NAME : typedName;
+}
+
 function requireTeacher(peer) {
   if (!peer || peer.role !== "teacher") {
     throw new Error("Only the teacher can perform this action");
@@ -109,14 +120,15 @@ function attachSocketHandlers(io) {
 
     socket.on("join-room", async (payload, callback) => {
       try {
-        const name = String(payload?.name || "").trim();
+        const typedName = String(payload?.name || "").trim();
         const meetingId = String(payload?.meetingId || "").trim();
         const role = normalizeRole(payload?.role);
-        log.action("join-room", { name, meetingId, role, socketId: socket.id });
+        log.action("join-room", { typedName, meetingId, role, socketId: socket.id });
 
-        if (!name || !meetingId) {
+        if (!typedName || !meetingId) {
           throw new Error("Name and meeting ID are required");
         }
+        const name = displayNameFor(role, typedName);
 
         const room = await getOrCreateRoom(meetingId);
 
