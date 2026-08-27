@@ -64,6 +64,45 @@ function runFfmpeg(args, label) {
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Reads the streams that actually landed in the captured file.
+ *
+ * Attaching a producer does not guarantee a stream: a camera that was off, or a
+ * screen share that stopped, sends no RTP and leaves no track behind. Building
+ * the layout from what was *attached* rather than what arrived makes the filter
+ * graph reference a stream that does not exist, and ffmpeg then writes a 0-byte
+ * output. So the file is asked what it contains.
+ */
+function probeStreams(filePath) {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      "ffprobe",
+      ["-v", "error", "-show_entries", "stream=index,codec_type", "-of", "csv=p=0", filePath],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let out = "";
+    proc.stdout.on("data", (c) => (out += String(c)));
+    proc.on("error", (err) => {
+      log.warn("ffprobe unavailable — falling back to attached streams", err.message);
+      resolve(null);
+    });
+    proc.on("exit", () => {
+      const types = out
+        .split("\n")
+        .map((line) => line.trim().split(",")[1])
+        .filter(Boolean);
+      if (!types.length) {
+        resolve(null);
+        return;
+      }
+      resolve({
+        videoCount: types.filter((t) => t === "video").length,
+        hasAudio: types.includes("audio"),
+      });
+    });
+  });
+}
+
+/**
  * Server-side recording: one composed MP4 per session containing the whiteboard
  * (or a shared screen), the teacher camera as an inset, and the teacher audio.
  *
@@ -283,17 +322,51 @@ class CloudRecorder {
     const boardPattern =
       this.frameIndex > 0 ? path.join(this.frameDir, "board_%06d.ppm") : null;
 
+    // Trust the file over our own bookkeeping: clamp the declared stream
+    // indexes to the streams that actually arrived.
+    const probe = await probeStreams(this.livePath);
+    let camIndex = this.camIndex;
+    let screenIndex = this.screenIndex;
+    let hasAudio = this.hasAudio;
+    if (probe) {
+      log.info("probed capture", probe);
+      if (camIndex != null && camIndex >= probe.videoCount) camIndex = null;
+      if (screenIndex != null && screenIndex >= probe.videoCount) screenIndex = null;
+      hasAudio = probe.hasAudio;
+      if (probe.videoCount === 0) {
+        log.warn("capture has no video track — recording audio and board only");
+      }
+    }
+
     const args = buildComposeArgs({
       livePath: this.livePath,
       boardPattern,
       outputPath: this.outputPath,
-      camIndex: this.camIndex,
-      screenIndex: this.screenIndex,
-      hasAudio: this.hasAudio,
+      camIndex,
+      screenIndex,
+      hasAudio,
       boardFps: BOARD_FPS,
     });
 
     await runFfmpeg(args, "compose");
+
+    // A compose that exits 0 but writes nothing must not be reported as
+    // success, and must never be left behind as a 0-byte file.
+    const produced = fileSize(this.outputPath);
+    if (produced < 2000) {
+      log.error("compose produced an empty file — removing it", {
+        output: this.outputName,
+        bytes: produced,
+      });
+      try {
+        fs.rmSync(this.outputPath, { force: true });
+      } catch {
+        /* nothing to remove */
+      }
+      this.outputPath = null;
+      this.outputName = null;
+      return false;
+    }
 
     const layout =
       this.screenIndex != null ? "screen-main + camera-inset" : "whiteboard-main + camera-inset";
@@ -317,6 +390,34 @@ class CloudRecorder {
     );
     log.info("compose done", { output: this.outputName, layout, bytes: fileSize(this.outputPath) });
     return true;
+  }
+
+  /**
+   * Keeps the unlaid-out capture under a recognisable name when compose fails.
+   * The audio and video are already in it and in sync; only the layout is
+   * missing, so this is a usable recording rather than a lost class.
+   */
+  _preserveRawCapture() {
+    try {
+      if (!this.livePath || fileSize(this.livePath) < 2000) {
+        log.warn("no capture to preserve");
+        return;
+      }
+      const { name } = resolveOutputPath(
+        RECORDINGS_DIR,
+        `${this.room.id}_raw`,
+        this.startedAt || Date.now(),
+      );
+      const rawName = name.replace(/\.mp4$/, ".mkv");
+      const rawPath = path.join(RECORDINGS_DIR, rawName);
+      fs.renameSync(this.livePath, rawPath);
+      this.livePath = null;
+      this.outputName = rawName;
+      this.outputPath = rawPath;
+      log.warn("kept the raw capture instead", { file: rawName, bytes: fileSize(rawPath) });
+    } catch (err) {
+      log.error("could not preserve the raw capture", err);
+    }
   }
 
   /** Intermediates are only removed once the final file exists. */
@@ -362,10 +463,17 @@ class CloudRecorder {
       try {
         composed = await this._compose();
       } catch (err) {
-        // The captured file is kept so a failed layout never loses the class.
-        log.error("compose failed — keeping the raw capture", err);
+        log.error("compose failed", err);
       }
-      if (composed) this._cleanupIntermediates();
+
+      if (composed) {
+        this._cleanupIntermediates();
+      } else {
+        // Layout failed, but the capture itself is intact. Give it the same
+        // name as the intended output so the class is findable and downloadable
+        // rather than sitting in a temp file nobody knows about.
+        this._preserveRawCapture();
+      }
 
       log.info("cloud recording stopped", { output: this.outputName, composed });
       return this.snapshot();

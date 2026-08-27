@@ -273,12 +273,15 @@ async function main() {
         }
         const files = fs
           .readdirSync(RECORDINGS_DIR)
-          .filter((f) => f.endsWith(".mp4") || f.endsWith(".webm"))
+          // .mkv appears when a layout pass failed and the raw capture was kept.
+          .filter((f) => /\.(mp4|webm|mkv)$/.test(f))
           .map((name) => ({
             name,
             url: `/recordings/${encodeURIComponent(name)}`,
             size: fs.statSync(path.join(RECORDINGS_DIR, name)).size,
-          }));
+          }))
+          // A zero-length file is a failed recording, not a recording.
+          .filter((f) => f.size > 0);
         res.json({ ok: true, files });
       } catch (err) {
         log.error("/api/recordings failed", err);
