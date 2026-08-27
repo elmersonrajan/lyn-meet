@@ -42,6 +42,26 @@ the audio timing. Intermediates are deleted only after the final file exists.
 Tuning: `RECORDING_WIDTH`, `RECORDING_HEIGHT`, `RECORDING_FPS`,
 `RECORDING_BOARD_FPS`, `RECORDING_WARMUP_MS`, `RECORDING_TIMEZONE`.
 
+### Check the pipeline before trusting a class to it
+
+```bash
+npm run check:recording
+```
+
+Runs the real ffmpeg with generated video, audio and whiteboard frames, then
+inspects the file produced: not empty, has both tracks, correct layout size, and
+a duration matching the source. Needs `ffmpeg` and `ffprobe` on the box, and
+exits non-zero on failure so it can gate a deploy. Run it after any change to
+the recording code -- it catches faults that only otherwise appear as a lost
+class.
+
+```bash
+npm run check
+```
+
+Parses every frontend file and reports syntax errors, including duplicate
+declarations, before the app is loaded.
+
 ## Idle meetings close themselves
 
 The server reclaims rooms nobody is using, so a forgotten tab does not hold a

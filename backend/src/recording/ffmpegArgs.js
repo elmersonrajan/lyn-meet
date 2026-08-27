@@ -126,8 +126,14 @@ function buildComposeArgs(opts) {
 
   // The board is a slow image sequence; looping its last frame is not wanted,
   // so it simply ends and `eof_action=pass` keeps the overlay going.
+  //
+  // -start_number 0 is required, not optional: frames are written from
+  // board_000000.ppm, and the image demuxer starts looking at 1 by default, so
+  // without this the input fails and the whole compose produces a 0-byte file.
   const boardInput = boardPattern ? 1 : null;
-  if (boardPattern) args.push("-framerate", String(boardFps), "-i", boardPattern);
+  if (boardPattern) {
+    args.push("-start_number", "0", "-framerate", String(boardFps), "-i", boardPattern);
+  }
 
   const fit = (w, h) =>
     `scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
