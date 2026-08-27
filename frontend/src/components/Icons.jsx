@@ -185,6 +185,28 @@ export const IconUsers = (p) => (
   </Svg>
 );
 
+export const IconLink = (p) => (
+  <Svg {...p}>
+    <path d="M10 13.5a3.5 3.5 0 0 0 5 0l3-3a3.54 3.54 0 0 0-5-5l-1.5 1.5" />
+    <path d="M14 10.5a3.5 3.5 0 0 0-5 0l-3 3a3.54 3.54 0 0 0 5 5l1.5-1.5" />
+  </Svg>
+);
+
+export const IconCheck = (p) => (
+  <Svg {...p}>
+    <path d="M5 12.5l4.5 4.5L19 7.5" />
+  </Svg>
+);
+
+export const IconShuffle = (p) => (
+  <Svg {...p}>
+    <path d="M17 4.5L20.5 8 17 11.5" />
+    <path d="M3.5 8h4.2a4 4 0 0 1 3.3 1.8l2 3a4 4 0 0 0 3.3 1.8h4.2" />
+    <path d="M3.5 16h4.2a4 4 0 0 0 3.3-1.8" />
+    <path d="M17 12.5l3.5 3.5L17 19.5" />
+  </Svg>
+);
+
 export const IconHand = (p) => (
   <Svg {...p}>
     <path d="M8 11V5.5a1.75 1.75 0 0 1 3.5 0V11" />

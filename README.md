@@ -77,6 +77,40 @@ and unmute deliberately. A student's unmute is refused server-side when no
 teacher or coordinator is present, and all student mics are muted when the last
 staff member leaves.
 
+## Invite links
+
+Share a meeting with a link instead of dictating the ID:
+
+```
+https://59.96.57.40:5173/?lynmeet=math-101
+```
+
+**Copy link** sits in the lobby and at the top of the in-meeting side panel.
+Opening the link fills the meeting in; the person only types their name.
+
+A link never carries a role — anyone arriving by link lands on Student, and
+staff pick Teacher or Coordinator by hand, so a forwarded link cannot hand out
+teacher access.
+
+**New code** in the lobby generates a Meet-style code such as `kfd-8mza-qtp`,
+avoiding characters that are easy to confuse (`0`/`o`, `1`/`l`). This is
+obscurity, not security: there is no authentication, so it only stops casual
+guessing of short IDs like `1`. You can still type your own ID.
+
+These forms are all accepted when reading a link, so nothing breaks if a link
+is written by hand:
+
+| Form | Note |
+| --- | --- |
+| `/?lynmeet=<id>` | what **Copy link** produces; always works |
+| `/?meeting=<id>`, `/?meetingId=<id>`, `/?id=<id>` | aliases |
+| `/lynmeet=<id>`, `/join/<id>`, `/m/<id>` | path forms |
+| `/<code>` | only when it matches a generated code |
+
+Path forms need the server to serve `index.html` for unknown paths. The Vite dev
+server does this already; behind nginx add `try_files $uri /index.html;`. The
+query form needs no server configuration at all, which is why it is the default.
+
 ## Attendance
 
 In/out times and duration per person, staff-only in the toolbar.
