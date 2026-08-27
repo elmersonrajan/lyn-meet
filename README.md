@@ -85,8 +85,11 @@ Share a meeting with a link instead of dictating the ID:
 https://59.96.57.40:5173/?lynmeet=math-101
 ```
 
-**Copy link** sits in the lobby and at the top of the in-meeting side panel.
+**Copy link** is a staff-only button in the in-meeting toolbar, beside Announce.
 Opening the link fills the meeting in; the person only types their name.
+
+After joining, the address bar is rewritten to the shareable form, so a teacher
+who typed the meeting ID can also copy the link straight out of the browser.
 
 A link never carries a role — anyone arriving by link lands on Student, and
 staff pick Teacher or Coordinator by hand, so a forwarded link cannot hand out

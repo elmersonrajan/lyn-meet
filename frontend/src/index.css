@@ -133,53 +133,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .field-note { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
 
-.share-link { display: flex; gap: 8px; align-items: stretch; min-width: 0; }
-.share-link.compact { flex: 0 0 auto; }
-
-.share-url {
-  flex: 1;
-  min-width: 0;
-  height: 42px;
-  border: 1px solid #b7c7de;
-  border-radius: 8px;
-  padding: 0 10px;
-  font-size: 13px;
-  font-family: "Consolas", ui-monospace, monospace;
-  color: var(--navy);
-  background: #f9fbfe;
-}
-
-.share-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  padding: 0 12px;
-  height: 42px;
-  border: 1px solid var(--navy);
-  border-radius: 8px;
-  background: var(--navy);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.share-btn:hover { background: var(--navy-dark); }
-.share-btn.done { background: var(--ok); border-color: var(--ok); }
-
 /* Meeting identity strip at the top of the room's side panel. */
 .meeting-info {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 10px;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 10px;
   border-bottom: 1px solid #dbe4f0;
   background: #fbfcfe;
   min-width: 0;
 }
-.mi-id { display: flex; flex-direction: column; min-width: 0; }
 .mi-label {
   font-size: 10px;
   font-weight: 700;
@@ -196,20 +159,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.meeting-info .share-btn { height: 30px; padding: 0 10px; font-size: 12px; }
-
-.notice-banner {
-  background: #e4f5ea;
-  color: #14663a;
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 13px;
-  margin-bottom: 12px;
-}
 
 @media (max-width: 640px) {
-  .share-link { flex-wrap: wrap; }
-  .share-url { flex: 1 1 100%; }
   .mid-row { flex-wrap: wrap; }
   .gen-btn { flex: 1 1 100%; justify-content: center; height: 38px; }
 }
@@ -468,6 +419,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .avatar.coordinator { background: var(--ok); }
 
 /* ---------- Raised hands ---------- */
+
+.tbtn.copied { background: #e4f5ea; border-color: var(--ok); color: #14663a; }
 
 .tbtn.raised {
   background: #fff8ec;

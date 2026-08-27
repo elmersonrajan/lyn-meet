@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import { useUser } from "../context/UserContext.jsx";
 import { getSocket, emitAck } from "../services/socket.js";
 import { readMeetingIdFromUrl, generateMeetingCode } from "../services/meetingLink.js";
-import ShareLink from "./ShareLink.jsx";
 import { IconShuffle } from "./Icons.jsx";
 
 const ROLES = [
@@ -23,7 +22,6 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
   // teacher access to whoever opened it.
   const [role, setRole] = useState(session.role || "student");
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
 
   const join = async (e) => {
@@ -70,7 +68,6 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
         <h1>LYN MEET</h1>
         <p className="lead">LOVE YOUR NEIGHBOURHOOD's - ONLINE CLASSROOM</p>
         {error ? <div className="error-banner">{error}</div> : null}
-        {notice ? <div className="notice-banner">{notice}</div> : null}
         <div className="field">
           <label htmlFor="name">Name</label>
           <input
@@ -106,12 +103,6 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
           ) : null}
         </div>
 
-        {meetingId.trim() ? (
-          <div className="field">
-            <label>Invite link</label>
-            <ShareLink meetingId={meetingId.trim()} variant="full" onCopied={setNotice} />
-          </div>
-        ) : null}
         <div className="role-row three">
           {ROLES.map((r) => (
             <button

@@ -14,6 +14,8 @@ import {
   IconClipboard,
   IconHand,
   IconHandLower,
+  IconLink,
+  IconCheck,
 } from "./Icons.jsx";
 
 export default function Toolbar({
@@ -37,6 +39,8 @@ export default function Toolbar({
   onOpenAttendance,
   onToggleHand,
   onLowerAllHands,
+  onCopyLink,
+  linkCopied,
   onLeave,
 }) {
   const staff = isTeacher || isCoordinator;
@@ -142,6 +146,17 @@ export default function Toolbar({
         {staff ? "Announce" : "Messages"}
         {unreadChat ? <span className="badge">{unreadChat > 9 ? "9+" : unreadChat}</span> : null}
       </button>
+
+      {staff ? (
+        <button
+          className={`tbtn ${linkCopied ? "copied" : ""}`}
+          onClick={onCopyLink}
+          title="Copy the invite link for this meeting"
+        >
+          <span className="ico">{linkCopied ? <IconCheck /> : <IconLink />}</span>
+          {linkCopied ? "Copied" : "Copy Link"}
+        </button>
+      ) : null}
 
       <span className="tspacer" />
 

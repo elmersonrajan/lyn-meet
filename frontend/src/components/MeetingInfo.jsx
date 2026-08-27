@@ -1,24 +1,20 @@
 import React from "react";
-import ShareLink from "./ShareLink.jsx";
 
 /**
- * Meeting identity strip at the top of the side panel: which meeting this is,
- * and a one-click invite link. Placed here rather than in the toolbar, which is
- * already crowded for staff.
+ * Meeting identity strip at the top of the side panel — which meeting you are
+ * in. Informational only: copying the invite link is a staff action and lives
+ * in the toolbar, so students see the ID without a share control.
  *
- * @param {{ meetingId: string, onToast?: (msg:string)=>void }} props
+ * @param {{ meetingId: string }} props
  */
-export default function MeetingInfo({ meetingId, onToast }) {
+export default function MeetingInfo({ meetingId }) {
   if (!meetingId) return null;
   return (
     <div className="meeting-info">
-      <div className="mi-id">
-        <span className="mi-label">Meeting</span>
-        <span className="mi-value" title={meetingId}>
-          {meetingId}
-        </span>
-      </div>
-      <ShareLink meetingId={meetingId} variant="compact" onCopied={onToast} />
+      <span className="mi-label">Meeting</span>
+      <span className="mi-value" title={meetingId}>
+        {meetingId}
+      </span>
     </div>
   );
 }
