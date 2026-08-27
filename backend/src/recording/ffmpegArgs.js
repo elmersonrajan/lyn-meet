@@ -5,13 +5,28 @@
  * be read, reviewed and tested without mediasoup, ffmpeg or a live meeting.
  */
 
-const LAYOUT_W = Number(process.env.RECORDING_WIDTH || 1280);
-const LAYOUT_H = Number(process.env.RECORDING_HEIGHT || 720);
 const FPS = Number(process.env.RECORDING_FPS || 25);
+/**
+ * Rounds to an even number, minimum 2.
+ *
+ * H.264 with yuv420p subsamples chroma by two in each direction, so an odd
+ * width or height is rejected outright: ffmpeg reports -22 (Invalid argument)
+ * and "could not open encoder". A sixth of 1280 is 213.33, which rounded to 213
+ * and broke every layout containing the camera inset, while the one layout
+ * without it worked.
+ */
+function even(n) {
+  return Math.max(2, Math.round(n / 2) * 2);
+}
+
+// Forced even for the same reason, since these come from the environment.
+const LAYOUT_W = even(Number(process.env.RECORDING_WIDTH || 1280));
+const LAYOUT_H = even(Number(process.env.RECORDING_HEIGHT || 720));
+
 // Teacher camera inset, bottom-right. Kept to a sixth of the width so the board
 // or a shared screen stays readable behind it.
-const PIP_W = Math.round(LAYOUT_W / 6);
-const PIP_H = Math.round((LAYOUT_W / 6) * (9 / 16));
+const PIP_W = even(LAYOUT_W / 6);
+const PIP_H = even((LAYOUT_W / 6) * (9 / 16));
 const PIP_MARGIN = 20;
 
 /**
@@ -211,6 +226,7 @@ function buildComposeArgs(opts) {
 }
 
 module.exports = {
+  even,
   buildSdp,
   buildIngestArgs,
   buildBoardVideoArgs,
