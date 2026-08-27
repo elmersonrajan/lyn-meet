@@ -192,12 +192,6 @@ export const IconLink = (p) => (
   </Svg>
 );
 
-export const IconCheck = (p) => (
-  <Svg {...p}>
-    <path d="M5 12.5l4.5 4.5L19 7.5" />
-  </Svg>
-);
-
 export const IconShuffle = (p) => (
   <Svg {...p}>
     <path d="M17 4.5L20.5 8 17 11.5" />
