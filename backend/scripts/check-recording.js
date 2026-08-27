@@ -19,7 +19,9 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-const { buildComposeArgs, buildSdp, buildIngestArgs } = require("../src/recording/ffmpegArgs");
+const {
+  buildComposeArgs, buildSdp, buildIngestArgs, buildBoardVideoArgs,
+} = require("../src/recording/ffmpegArgs");
 const { recordingFileName, dateStamp } = require("../src/recording/recordingName");
 const { writeBoardFrame } = require("../src/recording/whiteboardFrame");
 const { probeMedia, hasTool } = require("../src/recording/probeMedia");
@@ -96,20 +98,29 @@ function main() {
         points: [{ nx: 0.1, ny: 0.1 }, { nx: 0.5, ny: 0.4 }, { nx: 0.8, ny: 0.2 }] },
     ];
     for (let i = 0; i < DUR; i += 1) {
-      writeBoardFrame(path.join(frameDir, `board_${String(i).padStart(6, "0")}.ppm`), strokes);
+      writeBoardFrame(path.join(frameDir, `board_${String(i).padStart(6, "0")}.png`), strokes);
     }
-    const firstFrame = path.join(frameDir, "board_000000.ppm");
-    ok("first frame is board_000000.ppm", fs.existsSync(firstFrame));
-    ok("frames are non-empty", fs.statSync(firstFrame).size > 1000);
-    const boardPattern = path.join(frameDir, "board_%06d.ppm");
+    const firstFrame = path.join(frameDir, "board_000000.png");
+    ok("first frame is board_000000.png", fs.existsSync(firstFrame));
+    ok("frames are non-empty", fs.statSync(firstFrame).size > 500);
+    // PPM was 2.7 MB a frame; PNG must stay far smaller or an hour of class
+    // fills the disk with temporary files.
+    ok("frames are compressed", fs.statSync(firstFrame).size < 200000, `${fs.statSync(firstFrame).size} bytes`);
+    const boardPattern = path.join(frameDir, "board_%06d.png");
+
+    console.log("\n2b. whiteboard video step");
+    const boardVideo = path.join(dir, "board-source.mp4");
+    const rb = run("ffmpeg", buildBoardVideoArgs({ pattern: boardPattern, framesFps: 1, outputPath: boardVideo }));
+    ok("board video built", rb.ok, rb.out.slice(-500));
+    ok("board video is playable", (fs.existsSync(boardVideo) ? fs.statSync(boardVideo).size : 0) > 1000);
 
     // ---- Layout 1: whiteboard main, camera inset. This is the combination
     // that silently produced a 0-byte file.
     console.log("\n3. compose — whiteboard main + camera inset");
-    const out1 = path.join(dir, "board.mp4");
+    const out1 = path.join(dir, "layout-board.mp4");
     const args1 = buildComposeArgs({
-      livePath: live, boardPattern, outputPath: out1,
-      camIndex: 0, screenIndex: null, hasAudio: true, boardFps: 1,
+      livePath: live, boardVideo, outputPath: out1,
+      camIndex: 0, screenIndex: null, hasAudio: true,
     });
     const r1 = run("ffmpeg", args1);
     ok("ffmpeg exited cleanly", r1.ok, r1.out.slice(-500));
@@ -127,8 +138,8 @@ function main() {
     console.log("\n4. compose — screen main + camera inset");
     const out2 = path.join(dir, "screen.mp4");
     const r2 = run("ffmpeg", buildComposeArgs({
-      livePath: live, boardPattern, outputPath: out2,
-      camIndex: 0, screenIndex: 1, hasAudio: true, boardFps: 1,
+      livePath: live, boardVideo, outputPath: out2,
+      camIndex: 0, screenIndex: 1, hasAudio: true,
     }));
     ok("ffmpeg exited cleanly", r2.ok, r2.out.slice(-500));
     const i2 = probe(out2);
@@ -139,8 +150,8 @@ function main() {
     console.log("\n5. compose — board only, no camera");
     const out3 = path.join(dir, "boardonly.mp4");
     const r3 = run("ffmpeg", buildComposeArgs({
-      livePath: live, boardPattern, outputPath: out3,
-      camIndex: null, screenIndex: null, hasAudio: true, boardFps: 1,
+      livePath: live, boardVideo, outputPath: out3,
+      camIndex: null, screenIndex: null, hasAudio: true,
     }));
     ok("ffmpeg exited cleanly", r3.ok, r3.out.slice(-500));
     ok("output is playable", (fs.existsSync(out3) ? fs.statSync(out3).size : 0) > 2000);
@@ -155,8 +166,8 @@ function main() {
     ]);
     const out4 = path.join(dir, "silent.mp4");
     const r4 = run("ffmpeg", buildComposeArgs({
-      livePath: silent, boardPattern, outputPath: out4,
-      camIndex: 0, screenIndex: null, hasAudio: false, boardFps: 1,
+      livePath: silent, boardVideo, outputPath: out4,
+      camIndex: 0, screenIndex: null, hasAudio: false,
     }));
     ok("ffmpeg exited cleanly", r4.ok, r4.out.slice(-500));
     ok("output is playable", (fs.existsSync(out4) ? fs.statSync(out4).size : 0) > 2000);
