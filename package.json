@@ -6,6 +6,8 @@
   "scripts": {
     "install:all": "npm install --prefix backend && npm install --prefix frontend",
     "dev:backend": "npm run dev --prefix backend",
-    "dev:frontend": "npm run dev --prefix frontend"
+    "dev:frontend": "npm run dev --prefix frontend",
+    "check:recording": "npm run check:recording --prefix backend",
+    "check": "npm run check --prefix frontend"
   }
 }
