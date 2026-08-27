@@ -9,6 +9,7 @@ const cors = require("cors");
 const { Server } = require("socket.io");
 const { startWorkers } = require("./mediasoup/workerManager");
 const { attachSocketHandlers } = require("./socket");
+const { startIdleReaper } = require("./rooms/idleReaper");
 const { RECORDINGS_DIR } = require("./recording/cloudRecorder");
 const attendance = require("./attendance/attendanceLog");
 const { rooms } = require("./mediasoup/roomManager");
@@ -298,6 +299,7 @@ async function main() {
     });
 
     attachSocketHandlers(io);
+    startIdleReaper(io);
 
     server.listen(PORT, HOST, () => {
       log.info(`backend listening on http://${HOST}:${PORT}`);
