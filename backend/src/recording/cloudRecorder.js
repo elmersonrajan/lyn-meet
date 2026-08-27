@@ -4,7 +4,7 @@ const { spawn } = require("child_process");
 const { createLogger } = require("../utils/logger");
 const { writeBoardFrame } = require("./whiteboardFrame");
 const { resolveOutputPath } = require("./recordingName");
-const { buildSdp, buildIngestArgs, buildComposeArgs } = require("./ffmpegArgs");
+const { buildSdp, buildIngestArgs, buildBoardVideoArgs, buildComposeArgs } = require("./ffmpegArgs");
 const { probeMedia } = require("./probeMedia");
 
 const log = createLogger("CloudRecorder");
@@ -44,21 +44,45 @@ function codecInfo(consumer) {
   };
 }
 
-function runFfmpeg(args, label) {
-  return new Promise((resolve, reject) => {
-    log.info(`ffmpeg ${label}`, args.join(" "));
+/**
+ * Runs ffmpeg and reports the outcome rather than throwing, so the caller can
+ * try a simpler layout instead of losing the recording.
+ *
+ * The command and its complete output are appended to a log beside the
+ * recording. Previously failures went only to the server log, interleaved with
+ * everything else, which is why a broken layout was so hard to pin down.
+ */
+function runFfmpeg(args, label, logPath) {
+  return new Promise((resolve) => {
+    const command = `ffmpeg ${args.join(" ")}`;
+    log.info(`ffmpeg ${label}`, command);
     const proc = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
     let errText = "";
     proc.stderr.on("data", (chunk) => {
-      const line = String(chunk).trim();
-      if (line) log.info(`ffmpeg ${label}`, line);
-      errText += `${line}\n`;
+      errText += String(chunk);
     });
-    proc.on("error", (err) => reject(err));
-    proc.on("exit", (code, signal) => {
-      if (code === 0) resolve();
-      else reject(new Error(`${label} failed (${code || signal}): ${errText.slice(-400)}`));
-    });
+
+    const finish = (ok, code, signal, spawnError) => {
+      const tail = errText.trim().split(/\r?\n/).slice(-6).join(" | ");
+      if (tail) log.info(`ffmpeg ${label}`, tail);
+      if (logPath) {
+        try {
+          fs.appendFileSync(
+            logPath,
+            `\n=== ${label} @ ${new Date().toISOString()} ===\n${command}\n` +
+              `exit: code=${code} signal=${signal}` +
+              `${spawnError ? ` spawnError=${spawnError}` : ""}\n${errText}\n`,
+            "utf8",
+          );
+        } catch (err) {
+          log.error("could not write the ffmpeg log", err);
+        }
+      }
+      resolve({ ok, code, signal, stderr: errText });
+    };
+
+    proc.on("error", (err) => finish(false, null, null, err.message));
+    proc.on("exit", (code, signal) => finish(code === 0, code, signal, null));
   });
 }
 
@@ -98,6 +122,11 @@ class CloudRecorder {
     this.livePath = null;
     this.outputPath = null;
     this.outputName = null;
+    // Every ffmpeg command and its full output, kept beside the recording so a
+    // failure can be diagnosed without digging through the server log.
+    this.logPath = null;
+    this.boardVideoPath = null;
+    this.layoutUsed = null;
 
     this.frameDir = null;
     this.frameTimer = null;
@@ -139,6 +168,7 @@ class CloudRecorder {
       ensureDir(this.frameDir);
       this.sdpPath = path.join(RECORDINGS_DIR, `${this.id}.sdp`);
       this.livePath = path.join(RECORDINGS_DIR, `${this.id}_live.mkv`);
+      this.logPath = path.join(RECORDINGS_DIR, `${this.id}_ffmpeg.log`);
 
       fs.writeFileSync(this.sdpPath, buildSdp({ audio, cam, screen }), "utf8");
 
@@ -226,7 +256,7 @@ class CloudRecorder {
 
   _writeBoardSnapshot() {
     try {
-      const name = `board_${String(this.frameIndex).padStart(6, "0")}.ppm`;
+      const name = `board_${String(this.frameIndex).padStart(6, "0")}.png`;
       writeBoardFrame(path.join(this.frameDir, name), this.room.whiteboard || []);
       this.frameIndex += 1;
     } catch (err) {
@@ -270,6 +300,46 @@ class CloudRecorder {
     });
   }
 
+  /**
+   * Builds the whiteboard video as its own step, so a problem with the frame
+   * sequence cannot take the layout down with it.
+   * @returns {Promise<string|null>} the video path, or null if it could not be made
+   */
+  async _makeBoardVideo() {
+    if (this.frameIndex < 1) {
+      log.info("no whiteboard frames to build");
+      return null;
+    }
+    const out = path.join(RECORDINGS_DIR, `${this.id}_board.mp4`);
+    const res = await runFfmpeg(
+      buildBoardVideoArgs({
+        pattern: path.join(this.frameDir, "board_%06d.png"),
+        framesFps: BOARD_FPS,
+        outputPath: out,
+      }),
+      "board-video",
+      this.logPath,
+    );
+    if (!res.ok || fileSize(out) < 2000) {
+      log.warn("whiteboard video failed — continuing without the board", {
+        code: res.code,
+        bytes: fileSize(out),
+      });
+      return null;
+    }
+    this.boardVideoPath = out;
+    log.info("whiteboard video built", { bytes: fileSize(out), frames: this.frameIndex });
+    return out;
+  }
+
+  /**
+   * Lays the capture out, falling back to progressively simpler arrangements.
+   *
+   * Every earlier failure produced either a 0-byte file or a bare capture with
+   * no layout, because there was one attempt and no alternative. Now the richest
+   * arrangement is tried first and each fallback drops one element, so the worst
+   * outcome is a plain playable recording rather than nothing.
+   */
   async _compose() {
     const live = fileSize(this.livePath);
     if (live < 2000) {
@@ -277,16 +347,8 @@ class CloudRecorder {
       return false;
     }
 
-    const resolved = resolveOutputPath(RECORDINGS_DIR, this.room.id, this.startedAt || Date.now());
-    this.outputPath = resolved.fullPath;
-    this.outputName = resolved.name;
-
-    const boardPattern =
-      this.frameIndex > 0 ? path.join(this.frameDir, "board_%06d.ppm") : null;
-
-    // Trust the file over our own bookkeeping: clamp the declared stream
-    // indexes to the streams that actually arrived.
-    // ffprobe is absent on some installs, so this falls back to ffmpeg -i.
+    // Trust the file over our own bookkeeping: a producer that sent no RTP
+    // leaves no stream, and a layout referencing a missing stream fails.
     const probe = probeMedia(this.livePath);
     let camIndex = this.camIndex;
     let screenIndex = this.screenIndex;
@@ -296,63 +358,104 @@ class CloudRecorder {
       if (camIndex != null && camIndex >= probe.videoCount) camIndex = null;
       if (screenIndex != null && screenIndex >= probe.videoCount) screenIndex = null;
       hasAudio = probe.hasAudio;
-      if (probe.videoCount === 0) {
-        log.warn("capture has no video track — recording audio and board only");
-      }
     }
 
-    const args = buildComposeArgs({
-      livePath: this.livePath,
-      boardPattern,
-      outputPath: this.outputPath,
-      camIndex,
-      screenIndex,
-      hasAudio,
-      boardFps: BOARD_FPS,
-    });
+    const boardVideo = await this._makeBoardVideo();
 
-    await runFfmpeg(args, "compose");
+    const resolved = resolveOutputPath(RECORDINGS_DIR, this.room.id, this.startedAt || Date.now());
+    this.outputPath = resolved.fullPath;
+    this.outputName = resolved.name;
 
-    // A compose that exits 0 but writes nothing must not be reported as
-    // success, and must never be left behind as a 0-byte file.
-    const produced = fileSize(this.outputPath);
-    if (produced < 2000) {
-      log.error("compose produced an empty file — removing it", {
-        output: this.outputName,
+    // Richest first; each step removes whatever is most likely to be at fault.
+    const attempts = [
+      { label: "full", boardVideo, camIndex, screenIndex },
+      { label: "no-board", boardVideo: null, camIndex, screenIndex },
+      { label: "main-only", boardVideo, camIndex: null, screenIndex },
+      { label: "camera-only", boardVideo: null, camIndex, screenIndex: null },
+      { label: "audio-only", boardVideo: null, camIndex: null, screenIndex: null },
+    ];
+
+    for (const attempt of attempts) {
+      // Skip arrangements identical to one already tried.
+      if (attempt.boardVideo == null && attempt.camIndex == null && attempt.screenIndex == null && !hasAudio) {
+        continue;
+      }
+      const res = await runFfmpeg(
+        buildComposeArgs({
+          livePath: this.livePath,
+          boardVideo: attempt.boardVideo,
+          outputPath: this.outputPath,
+          camIndex: attempt.camIndex,
+          screenIndex: attempt.screenIndex,
+          hasAudio,
+        }),
+        `compose:${attempt.label}`,
+        this.logPath,
+      );
+
+      const produced = fileSize(this.outputPath);
+      if (res.ok && produced >= 2000) {
+        this.layoutUsed = attempt.label;
+        this.writeSidecar(attempt, hasAudio);
+        log.info("compose done", {
+          output: this.outputName,
+          layout: attempt.label,
+          bytes: produced,
+        });
+        return true;
+      }
+
+      log.warn(`compose ${attempt.label} failed — trying a simpler layout`, {
+        code: res.code,
         bytes: produced,
+        error: res.stderr.trim().split(/\r?\n/).slice(-3).join(" | "),
       });
       try {
         fs.rmSync(this.outputPath, { force: true });
       } catch {
         /* nothing to remove */
       }
-      this.outputPath = null;
-      this.outputName = null;
-      return false;
     }
 
-    const layout =
-      this.screenIndex != null ? "screen-main + camera-inset" : "whiteboard-main + camera-inset";
-    fs.writeFileSync(
-      path.join(RECORDINGS_DIR, `${this.outputName.replace(/\.mp4$/, "")}.json`),
-      JSON.stringify(
-        {
-          id: this.id,
-          meetingId: this.room.id,
-          file: this.outputName,
-          startedAt: this.startedAt,
-          endedAt: this.endedAt,
-          layout,
-          hasAudio: this.hasAudio,
-          boardFrames: this.frameIndex,
-          whiteboard: this.room.whiteboard || [],
-        },
-        null,
-        2,
-      ),
-    );
-    log.info("compose done", { output: this.outputName, layout, bytes: fileSize(this.outputPath) });
-    return true;
+    log.error("every layout failed — see the ffmpeg log", { logPath: this.logPath });
+    this.outputPath = null;
+    this.outputName = null;
+    return false;
+  }
+
+  writeSidecar(attempt, hasAudio) {
+    try {
+      const layout =
+        attempt.screenIndex != null
+          ? "screen-main"
+          : attempt.boardVideo
+            ? "whiteboard-main"
+            : "camera-main";
+      fs.writeFileSync(
+        path.join(RECORDINGS_DIR, `${this.outputName.replace(/\.mp4$/, "")}.json`),
+        JSON.stringify(
+          {
+            id: this.id,
+            meetingId: this.room.id,
+            file: this.outputName,
+            startedAt: this.startedAt,
+            endedAt: this.endedAt,
+            layout,
+            attempt: attempt.label,
+            hasAudio,
+            hasCamera: attempt.camIndex != null,
+            hasScreen: attempt.screenIndex != null,
+            hasWhiteboard: Boolean(attempt.boardVideo),
+            boardFrames: this.frameIndex,
+            whiteboard: this.room.whiteboard || [],
+          },
+          null,
+          2,
+        ),
+      );
+    } catch (err) {
+      log.error("could not write the sidecar", err);
+    }
   }
 
   /**
@@ -389,7 +492,9 @@ class CloudRecorder {
       if (this.frameDir && fs.existsSync(this.frameDir)) {
         fs.rmSync(this.frameDir, { recursive: true, force: true });
       }
-      for (const p of [this.sdpPath, this.livePath]) {
+      // The ffmpeg log is deliberately kept: it is small, and it is the record
+      // of how this recording was produced.
+      for (const p of [this.sdpPath, this.livePath, this.boardVideoPath]) {
         if (p && fs.existsSync(p)) fs.rmSync(p, { force: true });
       }
     } catch (err) {

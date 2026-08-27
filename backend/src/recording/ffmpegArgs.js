@@ -93,7 +93,38 @@ function buildIngestArgs({ sdpPath, outputPath, hasAudio }) {
 }
 
 /**
- * Compose pass: the ingested streams plus the whiteboard frames become one
+ * Turns the whiteboard frame sequence into a small video, as its own step.
+ *
+ * Previously the frames were fed straight into the layout as an image sequence.
+ * That put the most fragile input -- a numbered sequence, with its own frame
+ * rate and its own start index -- inside the one command that also had to get
+ * the overlay and the audio right, so any problem with it took the whole
+ * recording down. As a separate step it either works or it does not, and the
+ * layout can carry on without it.
+ *
+ * -start_number 0 matters here: frames begin at 000000 and the image demuxer
+ * looks for 1 by default.
+ */
+function buildBoardVideoArgs({ pattern, framesFps = 1, outputPath, width = LAYOUT_W, height = LAYOUT_H, fps = FPS }) {
+  return [
+    "-y",
+    "-loglevel", "warning",
+    "-start_number", "0",
+    "-framerate", String(framesFps),
+    "-i", pattern,
+    "-vf",
+    `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+      `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${fps},format=yuv420p`,
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-crf", "28",
+    "-an",
+    outputPath,
+  ];
+}
+
+/**
+ * Compose pass: the ingested streams plus the whiteboard video become one
  * laid-out MP4.
  *
  * Layout: a shared screen takes the main area when one was captured, otherwise
@@ -111,12 +142,11 @@ function buildIngestArgs({ sdpPath, outputPath, hasAudio }) {
 function buildComposeArgs(opts) {
   const {
     livePath,
-    boardPattern,
+    boardVideo,
     outputPath,
     camIndex,
     screenIndex,
     hasAudio,
-    boardFps = 1,
     width = LAYOUT_W,
     height = LAYOUT_H,
     fps = FPS,
@@ -124,16 +154,10 @@ function buildComposeArgs(opts) {
 
   const args = ["-y", "-loglevel", "warning", "-i", livePath];
 
-  // The board is a slow image sequence; looping its last frame is not wanted,
-  // so it simply ends and `eof_action=pass` keeps the overlay going.
-  //
-  // -start_number 0 is required, not optional: frames are written from
-  // board_000000.ppm, and the image demuxer starts looking at 1 by default, so
-  // without this the input fails and the whole compose produces a 0-byte file.
-  const boardInput = boardPattern ? 1 : null;
-  if (boardPattern) {
-    args.push("-start_number", "0", "-framerate", String(boardFps), "-i", boardPattern);
-  }
+  // A plain video input, already scaled and at the right frame rate by the
+  // board step, so nothing here has to reason about image sequences.
+  const boardInput = boardVideo ? 1 : null;
+  if (boardVideo) args.push("-i", boardVideo);
 
   const fit = (w, h) =>
     `scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
@@ -189,6 +213,7 @@ function buildComposeArgs(opts) {
 module.exports = {
   buildSdp,
   buildIngestArgs,
+  buildBoardVideoArgs,
   buildComposeArgs,
   LAYOUT_W,
   LAYOUT_H,
