@@ -1,5 +1,5 @@
 # LYN MEET
-**https://lynindia.in/**
+**https://meet.lynindia.in/**
 
 Teacher + students. Whiteboard/chat over Socket.IO. Camera/audio/screen over mediasoup WebRTC. Cloud recording writes **`.mp4`** on the server.
 
