@@ -418,6 +418,43 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .avatar.teacher { background: var(--navy); }
 .avatar.coordinator { background: var(--ok); }
 
+/* ---------- Who is talking ---------- */
+
+/* Rows reorder as people speak, so the movement is eased rather than jumping. */
+.prow { transition: background 0.14s ease, box-shadow 0.14s ease; }
+.prow.speaking { background: #eef5ff; box-shadow: inset 3px 0 0 var(--navy); }
+.prow.speaking:hover { background: #e6f0ff; }
+.prow.speaking .avatar { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--navy); }
+
+.speak-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 11px;
+  flex-shrink: 0;
+}
+.speak-bars i {
+  width: 2.5px;
+  height: 100%;
+  border-radius: 1px;
+  background: var(--navy);
+  transform-origin: bottom;
+  animation: speak-bounce 0.9s ease-in-out infinite;
+}
+/* Offset so the bars move against each other rather than in unison. */
+.speak-bars i:nth-child(2) { animation-delay: 0.15s; }
+.speak-bars i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes speak-bounce {
+  0%, 100% { transform: scaleY(0.3); }
+  50% { transform: scaleY(1); }
+}
+
+/* Someone who has asked not to see motion still gets the colour and the ring. */
+@media (prefers-reduced-motion: reduce) {
+  .speak-bars i { animation: none; transform: scaleY(0.7); }
+}
+
 /* ---------- Raised hands ---------- */
 
 .tbtn.copied { background: #e4f5ea; border-color: var(--ok); color: #14663a; }

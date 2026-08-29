@@ -8,6 +8,25 @@ const log = createLogger("RoomManager");
 
 const TEACHER_GRACE_MS = Number(process.env.TEACHER_RECONNECT_GRACE_MS || 120000);
 
+/**
+ * Who is speaking, judged from the audio itself rather than from whether a
+ * microphone happens to be unmuted.
+ *
+ * -55 dBov is quiet speech; below it is room noise, a fan, or breathing, and
+ * showing those as "talking" would leave the indicator on permanently. The
+ * interval is how often the room is re-judged: often enough to feel live,
+ * rarely enough that a full class is not a broadcast storm.
+ */
+const SPEAKING_THRESHOLD_DB = Number(process.env.SPEAKING_THRESHOLD_DB || -55);
+const SPEAKING_INTERVAL_MS = Number(process.env.SPEAKING_INTERVAL_MS || 400);
+const SPEAKING_MAX = Number(process.env.SPEAKING_MAX || 6);
+
+// Set by the socket layer, which owns the only way to reach the browsers.
+let speakingListener = () => {};
+function onSpeaking(fn) {
+  speakingListener = fn;
+}
+
 const ROLES = new Set(["teacher", "student", "coordinator"]);
 
 function normalizeRole(role) {
@@ -56,6 +75,7 @@ class Room {
     this.createdAt = Date.now();
     this.closed = false;
     this.recorder = null;
+    this.audioObserver = null;
     this.teacherLeaveTimer = null;
     this.chat = [];
     this.whiteboard = [];
@@ -102,6 +122,67 @@ class Room {
       }
     }
     return list;
+  }
+
+  /**
+   * One audio level observer per room, created with the first microphone.
+   *
+   * mediasoup measures the level of every audio producer it is watching and
+   * reports the loudest, which is the only way to know who is *talking* rather
+   * than merely unmuted. A paused producer sends nothing, so muted people never
+   * appear here.
+   */
+  async _ensureAudioObserver() {
+    if (this.audioObserver) return this.audioObserver;
+    try {
+      this.audioObserver = await this.router.createAudioLevelObserver({
+        maxEntries: SPEAKING_MAX,
+        threshold: SPEAKING_THRESHOLD_DB,
+        interval: SPEAKING_INTERVAL_MS,
+      });
+
+      // Loudest first, which is the order the participant list wants.
+      this.audioObserver.on("volumes", (volumes) => {
+        try {
+          const speakers = volumes
+            .map((entry) => entry.producer?.appData?.peerId)
+            .filter((id) => id && this.peers.has(id));
+          speakingListener(this.id, speakers);
+        } catch (err) {
+          log.error("volumes handler failed", err);
+        }
+      });
+
+      this.audioObserver.on("silence", () => {
+        try {
+          speakingListener(this.id, []);
+        } catch (err) {
+          log.error("silence handler failed", err);
+        }
+      });
+
+      log.info("audio level observer created", {
+        roomId: this.id,
+        thresholdDb: SPEAKING_THRESHOLD_DB,
+        intervalMs: SPEAKING_INTERVAL_MS,
+      });
+    } catch (err) {
+      // Speaker indicators are a nicety; a room without them still works.
+      log.error("could not create the audio level observer", err);
+      this.audioObserver = null;
+    }
+    return this.audioObserver;
+  }
+
+  /** Watches one microphone. The observer drops it by itself when it closes. */
+  async _watchAudio(producer) {
+    try {
+      const observer = await this._ensureAudioObserver();
+      if (!observer) return;
+      await observer.addProducer({ producerId: producer.id });
+    } catch (err) {
+      log.error("could not watch this microphone for speaking", err);
+    }
   }
 
   async createWebRtcTransport(peer) {
@@ -185,7 +266,10 @@ class Room {
       }
 
       if (source === "video") peer.videoOff = false;
-      if (source === "audio") peer.audioMuted = false;
+      if (source === "audio") {
+        peer.audioMuted = false;
+        await this._watchAudio(producer);
+      }
 
       producer.on("transportclose", () => {
         log.info("producer transportclose", { producerId: producer.id });
@@ -456,6 +540,7 @@ module.exports = {
   getRoom,
   removePeerFromRoom,
   closeRoom,
+  onSpeaking,
   TEACHER_GRACE_MS,
   normalizeRole,
 };
