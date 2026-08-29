@@ -15,7 +15,9 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
   // clicked it, so they only have to type their name.
   const [invited] = useState(() => readMeetingIdFromUrl());
   const [name, setName] = useState(session.name || "");
-  const [meetingId, setMeetingId] = useState(session.meetingId || invited || "");
+  const [meetingId, setMeetingId] = useState(
+    String(session.meetingId || invited || "").toUpperCase(),
+  );
   // A link never carries a role. Anyone arriving by link is a student, and
   // staff pick their role by hand -- otherwise a forwarded link would hand out
   // teacher access to whoever opened it.
@@ -87,11 +89,19 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
         </div>
         <div className="field">
           <label htmlFor="mid">Meeting ID</label>
+          {/* Meeting ids are upper case, and the server treats them that way,
+              so typing in lower case would otherwise land you in an empty room
+              of your own with no hint as to why. Converted as it is typed
+              rather than on submit, so what you see is what you join. */}
           <input
             id="mid"
             value={meetingId}
-            onChange={(e) => setMeetingId(e.target.value)}
-            placeholder="e.g. math-101"
+            onChange={(e) => setMeetingId(e.target.value.toUpperCase())}
+            style={{ textTransform: "uppercase" }}
+            autoCapitalize="characters"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="e.g. MATH-101"
             required
           />
           {invited && meetingId === invited ? (
