@@ -117,16 +117,25 @@ function buildIngestArgs({ sdpPath, outputPath, hasAudio }) {
  * recording down. As a separate step it either works or it does not, and the
  * layout can carry on without it.
  *
- * -start_number 0 matters here: frames begin at 000000 and the image demuxer
+ * Prefer `manifest`: a concat list carrying each frame's real on-screen
+ * duration. A fixed `-framerate` assumes the snapshot timer fired exactly on
+ * schedule, and it does not -- Node timers drift, and this box is also running
+ * the SFU and an ffmpeg ingest. Every late tick then shortened the board
+ * timeline against the audio, so the board ran ahead of the voice describing
+ * it. Real durations pin each frame to the moment it was actually drawn.
+ *
+ * `pattern` is the older fixed-rate form, kept for the pipeline check.
+ * -start_number 0 matters there: frames begin at 000000 and the image demuxer
  * looks for 1 by default.
  */
-function buildBoardVideoArgs({ pattern, framesFps = 1, outputPath, width = LAYOUT_W, height = LAYOUT_H, fps = FPS }) {
-  return [
-    "-y",
-    "-loglevel", "warning",
-    "-start_number", "0",
-    "-framerate", String(framesFps),
-    "-i", pattern,
+function buildBoardVideoArgs({ pattern, manifest, framesFps = 1, outputPath, width = LAYOUT_W, height = LAYOUT_H, fps = FPS }) {
+  const args = ["-y", "-loglevel", "warning"];
+  if (manifest) {
+    args.push("-f", "concat", "-safe", "0", "-i", manifest);
+  } else {
+    args.push("-start_number", "0", "-framerate", String(framesFps), "-i", pattern);
+  }
+  args.push(
     "-vf",
     `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
       `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${fps},format=yuv420p`,
@@ -135,7 +144,8 @@ function buildBoardVideoArgs({ pattern, framesFps = 1, outputPath, width = LAYOU
     "-crf", "28",
     "-an",
     outputPath,
-  ];
+  );
+  return args;
 }
 
 /**
@@ -143,15 +153,20 @@ function buildBoardVideoArgs({ pattern, framesFps = 1, outputPath, width = LAYOU
  * laid-out MP4.
  *
  * Layout: a shared screen takes the main area when one was captured, otherwise
- * the whiteboard does; the teacher camera is always a small inset bottom-right.
+ * the whiteboard does. Everything else that was captured becomes an inset along
+ * the bottom edge, right to left: the teacher camera first, then the whiteboard
+ * when a screen displaced it from the main area. Nothing the teacher shared is
+ * dropped -- a class where the board was displaced by a screen share used to
+ * lose the board entirely, so anything written while sharing was gone.
+ *
  * Audio is taken straight from the ingest, so this pass cannot disturb the
  * audio/video relationship established during capture -- it only rewrites the
  * video track.
  *
  * @param {{
- *   livePath: string, boardPattern: string|null, outputPath: string,
+ *   livePath: string, boardVideo: string|null, outputPath: string,
  *   camIndex: number|null, screenIndex: number|null, hasAudio: boolean,
- *   boardFps?: number, width?: number, height?: number, fps?: number,
+ *   width?: number, height?: number, fps?: number,
  * }} opts
  */
 function buildComposeArgs(opts) {
@@ -178,28 +193,39 @@ function buildComposeArgs(opts) {
     `scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
     `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`;
 
-  // Main area: screen when captured, else the whiteboard, else black.
-  let mainLabel;
   const chains = [];
+  // Insets are laid out right to left along the bottom, so the first entry
+  // sits in the conventional bottom-right corner.
+  const insets = [];
+
+  // Main area: screen when captured, else the whiteboard, else black.
   if (screenIndex != null) {
     chains.push(`[0:v:${screenIndex}]${fit(width, height)},fps=${fps}[main]`);
-    mainLabel = "main";
   } else if (boardInput != null) {
     chains.push(`[${boardInput}:v]${fit(width, height)},fps=${fps}[main]`);
-    mainLabel = "main";
   } else {
     chains.push(`color=c=black:s=${width}x${height}:r=${fps}[main]`);
-    mainLabel = "main";
   }
 
-  let videoLabel = mainLabel;
   if (camIndex != null) {
-    chains.push(`[0:v:${camIndex}]${fit(PIP_W, PIP_H)},fps=${fps}[pip]`);
-    chains.push(
-      `[${mainLabel}][pip]overlay=W-w-${PIP_MARGIN}:H-h-${PIP_MARGIN}:eof_action=pass[vout]`,
-    );
-    videoLabel = "vout";
+    chains.push(`[0:v:${camIndex}]${fit(PIP_W, PIP_H)},fps=${fps}[cam]`);
+    insets.push("cam");
   }
+  // The board only needs an inset when a screen share took the main area.
+  if (boardInput != null && screenIndex != null) {
+    chains.push(`[${boardInput}:v]${fit(PIP_W, PIP_H)},fps=${fps}[board]`);
+    insets.push("board");
+  }
+
+  let videoLabel = "main";
+  insets.forEach((label, i) => {
+    // eof_action=pass keeps the main area running after an inset ends, which is
+    // normal: a camera or a screen share rarely lasts the whole class.
+    const x = `W-w-${PIP_MARGIN + i * (PIP_W + PIP_MARGIN)}`;
+    const out = `ov${i}`;
+    chains.push(`[${videoLabel}][${label}]overlay=${x}:H-h-${PIP_MARGIN}:eof_action=pass[${out}]`);
+    videoLabel = out;
+  });
 
   args.push("-filter_complex", chains.join(";"), "-map", `[${videoLabel}]`);
   if (hasAudio) args.push("-map", "0:a:0");

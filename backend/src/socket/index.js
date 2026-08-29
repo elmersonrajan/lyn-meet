@@ -244,6 +244,15 @@ function attachSocketHandlers(io) {
               : "You joined muted — unmute when you want to speak",
           });
         }
+        // Told before the replacement, so nobody is briefly subscribed to two
+        // producers for one source and left rendering the dead one.
+        if (producer.appData.replaces) {
+          socket.to(room.id).emit("producer-closed", {
+            producerId: producer.appData.replaces,
+            peerId: peer.id,
+            source: producer.appData.source,
+          });
+        }
         socket.to(room.id).emit("new-producer", {
           producerId: producer.id,
           peerId: peer.id,
@@ -434,14 +443,36 @@ function attachSocketHandlers(io) {
       }
     });
 
+    /**
+     * Stopping answers as soon as the capture has ended, then lays the file out
+     * in the background and announces it when it is ready.
+     *
+     * Waiting for the whole pipeline meant the button did nothing visible for as
+     * long as ffmpeg took, so it got pressed again and again -- and every press
+     * was another full teardown and layout of the same class, which corrupted
+     * the output and eventually took the server with it.
+     */
     socket.on("stop-recording", async (_payload, callback) => {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
         requireStaff(peer);
+        // Held before the await so the file that gets built is this recording,
+        // not one started while this one was still stopping.
+        const recorder = room.recorder;
         const rec = await room.stopRecording();
         io.to(room.id).emit("recording-stopped", rec);
         ack(callback, { ok: true, recording: rec });
+
+        room
+          .finalizeRecording(recorder)
+          .then((final) => {
+            io.to(room.id).emit("recording-ready", final);
+          })
+          .catch((err) => {
+            log.error("finalize recording failed", err);
+            io.to(room.id).emit("recording-failed", { error: err.message });
+          });
       } catch (err) {
         log.error("stop-recording failed", err);
         ack(callback, { ok: false, error: err.message });

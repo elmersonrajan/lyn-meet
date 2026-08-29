@@ -33,6 +33,10 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   const [chatTab, setChatTab] = useState("chat");
   const [unreadChat, setUnreadChat] = useState(0);
   const [recording, setRecording] = useState(Boolean(joinPayload.recording?.active));
+  // The capture has ended and the server is building the file. Kept apart from
+  // `recording` so the button can say what is actually happening.
+  const [recSaving, setRecSaving] = useState(Boolean(joinPayload.recording?.finalizing));
+  const [recBusy, setRecBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [clipUrl, setClipUrl] = useState("");
   const [teacherDisconnected, setTeacherDisconnected] = useState(false);
@@ -145,11 +149,21 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     };
     const onRecStart = () => {
       setRecording(true);
+      setRecSaving(false);
       show("Cloud recording started");
     };
     const onRecStop = () => {
       setRecording(false);
-      show("Cloud recording saved on server");
+      setRecSaving(true);
+      show("Recording stopped — saving on the server");
+    };
+    const onRecReady = (rec) => {
+      setRecSaving(false);
+      show(rec?.file ? `Recording saved: ${rec.file}` : "Recording saved on the server");
+    };
+    const onRecFailed = ({ error }) => {
+      setRecSaving(false);
+      show(error ? `Recording could not be saved: ${error}` : "Recording could not be saved");
     };
     const onTeacherDown = (payload) => {
       setTeacherDisconnected(true);
@@ -190,6 +204,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     socket.on("hands-cleared", onHandsCleared);
     socket.on("recording-started", onRecStart);
     socket.on("recording-stopped", onRecStop);
+    socket.on("recording-ready", onRecReady);
+    socket.on("recording-failed", onRecFailed);
     socket.on("teacher-disconnected", onTeacherDown);
     socket.on("peer-reconnected", onTeacherBack);
     socket.on("session-closed", onClosed);
@@ -211,6 +227,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       socket.off("hands-cleared", onHandsCleared);
       socket.off("recording-started", onRecStart);
       socket.off("recording-stopped", onRecStop);
+      socket.off("recording-ready", onRecReady);
+      socket.off("recording-failed", onRecFailed);
       socket.off("teacher-disconnected", onTeacherDown);
       socket.off("peer-reconnected", onTeacherBack);
       socket.off("session-closed", onClosed);
@@ -234,17 +252,25 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     }
   };
 
+  // One request at a time. Every extra press used to reach the server as another
+  // full stop of the same recording, which is what corrupted the file and
+  // overloaded the box.
   const onToggleRecord = async () => {
+    if (!isStaff || recBusy || recSaving) return;
+    setRecBusy(true);
     try {
-      if (!isStaff) return;
       if (recording) {
         await emitAck("stop-recording", {});
+        setRecording(false);
+        setRecSaving(true);
       } else {
         await emitAck("start-recording", {});
       }
     } catch (err) {
       console.error("[MeetingRoom] record toggle failed", err);
       setToast(err.message);
+    } finally {
+      setRecBusy(false);
     }
   };
 
@@ -356,7 +382,11 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       <RemoteAudio items={media.remoteAudio} />
       <div className="room-frame">
         <div className="stage-wrap">
-          {recording ? <div className="rec-pill">REC CLOUD</div> : null}
+          {recording ? (
+            <div className="rec-pill">REC CLOUD</div>
+          ) : recSaving ? (
+            <div className="rec-pill saving">SAVING…</div>
+          ) : null}
           {isStaff ? (
             <div className="stage-tools">
               <button
@@ -412,6 +442,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         camOn={media.camOn}
         micOn={media.micOn}
         recording={recording}
+        recSaving={recSaving}
+        recBusy={recBusy}
         micLocked={micLocked}
         unreadChat={unreadChat}
         activePoll={activePoll}

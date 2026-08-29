@@ -114,6 +114,35 @@ function main() {
     ok("board video built", rb.ok, rb.out.slice(-500));
     ok("board video is playable", (fs.existsSync(boardVideo) ? fs.statSync(boardVideo).size : 0) > 1000);
 
+    // The manifest form is what the recorder ships: frames carry their real
+    // durations, so the board tracks the audio instead of assuming the snapshot
+    // timer fired exactly on schedule.
+    console.log("\n2c. whiteboard video from a timed manifest");
+    const manifest = path.join(frameDir, "board.ffconcat");
+    fs.writeFileSync(
+      manifest,
+      ["ffconcat version 1.0"]
+        .concat(
+          Array.from({ length: DUR }, (_, i) => [
+            `file 'board_${String(i).padStart(6, "0")}.png'`,
+            "duration 1.000",
+          ]).flat(),
+        )
+        .concat([`file 'board_${String(DUR - 1).padStart(6, "0")}.png'`])
+        .join("\n") + "\n",
+      "utf8",
+    );
+    const boardTimed = path.join(dir, "board-timed.mp4");
+    const rbt = run("ffmpeg", buildBoardVideoArgs({ manifest, outputPath: boardTimed }));
+    ok("timed board video built", rbt.ok, rbt.out.slice(-500));
+    const bi = probe(boardTimed);
+    ok("timed board video is playable", (fs.existsSync(boardTimed) ? fs.statSync(boardTimed).size : 0) > 1000);
+    ok(
+      "board duration matches the manifest",
+      Math.abs((bi?.duration || 0) - DUR) < 1.0,
+      `got ${bi?.duration}s, expected ~${DUR}s`,
+    );
+
     // ---- Layout 1: whiteboard main, camera inset. This is the combination
     // that silently produced a 0-byte file.
     console.log("\n3. compose — whiteboard main + camera inset");
@@ -134,17 +163,24 @@ function main() {
     // symptom this pipeline exists to avoid.
     ok("duration matches the source", Math.abs((i1?.duration || 0) - DUR) < 1.5, `got ${i1?.duration}s, expected ~${DUR}s`);
 
-    // ---- Layout 2: a shared screen takes the main area.
-    console.log("\n4. compose — screen main + camera inset");
+    // ---- Layout 2: everything at once. A screen share takes the main area and
+    // the board keeps an inset of its own, so nothing the teacher showed is
+    // dropped from the class.
+    console.log("\n4. compose — screen main + board inset + camera inset");
     const out2 = path.join(dir, "screen.mp4");
-    const r2 = run("ffmpeg", buildComposeArgs({
+    const args2 = buildComposeArgs({
       livePath: live, boardVideo, outputPath: out2,
       camIndex: 0, screenIndex: 1, hasAudio: true,
-    }));
+    });
+    const r2 = run("ffmpeg", args2);
     ok("ffmpeg exited cleanly", r2.ok, r2.out.slice(-500));
+    const filter2 = args2[args2.indexOf("-filter_complex") + 1];
+    ok("the board is still in the layout", /\[board\]/.test(filter2), filter2);
+    ok("the camera is still in the layout", /\[cam\]/.test(filter2), filter2);
     const i2 = probe(out2);
     ok("output is playable", (fs.existsSync(out2) ? fs.statSync(out2).size : 0) > 2000);
     ok("has video and audio", (i2?.videoCount || 0) >= 1 && (i2?.audioCount || 0) >= 1, JSON.stringify(i2));
+    ok("output is the layout size", i2?.width === 1280 && i2?.height === 720, `${i2?.width}x${i2?.height}`);
 
     // ---- Layout 3: audio only, no camera and no screen.
     console.log("\n5. compose — board only, no camera");
