@@ -178,6 +178,29 @@ async function main() {
       }
     });
 
+    /**
+     * Domain ownership proof for the mobile apps.
+     *
+     * Android and iOS each verify that this domain has agreed to hand its
+     * links to the app by fetching a file from /.well-known on install. Both
+     * are strict and neither reports failure: the wrong content type, a
+     * redirect, or anything but 200 and the link silently goes to a browser
+     * for the rest of that install. The SPA's catch-all was answering these
+     * paths with index.html, which is exactly that case.
+     *
+     * The Apple file has no extension on purpose -- that is the name Apple
+     * looks for -- so the type is set explicitly rather than guessed.
+     */
+    const WELL_KNOWN_DIR = path.join(__dirname, "../../well-known");
+    app.use(
+      "/.well-known",
+      express.static(WELL_KNOWN_DIR, {
+        setHeaders: (res) => res.setHeader("Content-Type", "application/json"),
+        dotfiles: "allow",
+        fallthrough: false,
+      }),
+    );
+
     app.use("/recordings", express.static(RECORDINGS_DIR));
 
     app.post(

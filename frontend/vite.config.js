@@ -22,6 +22,10 @@ export default defineConfig({
       "/api": { target: "http://127.0.0.1:5000" },
       "/recordings": { target: "http://127.0.0.1:5000" },
       "/health": { target: "http://127.0.0.1:5000" },
+      // Domain ownership proof for the mobile apps. Without this the SPA
+      // answers it with index.html, Android's check fails silently, and every
+      // shared link opens a browser instead of the app.
+      "/.well-known": { target: "http://127.0.0.1:5000" },
     },
   },
 });
