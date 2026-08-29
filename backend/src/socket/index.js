@@ -11,6 +11,7 @@ const {
 const { createLogger } = require("../utils/logger");
 const meetingLog = require("../utils/meetingLog");
 const attendance = require("../attendance/attendanceLog");
+const renderQueue = require("../recording/renderQueue");
 
 const log = createLogger("Socket");
 
@@ -107,12 +108,26 @@ function joinAck(room, peer, extra = {}) {
     polls: room.polls.map((p) => pollPublic(p, peer.id)),
     whiteboard: room.whiteboard,
     recording: room.recorder ? room.recorder.snapshot() : null,
+    // Anything for this meeting still being built, so somebody joining or
+    // reloading sees where it got to rather than nothing at all.
+    recordingJobs: renderQueue.listJobs().filter((j) => j.meetingId === room.id),
     producers: room.listProducers(),
     ...extra,
   };
 }
 
 function attachSocketHandlers(io) {
+  // Render progress reaches whoever is still in the room. Best effort on
+  // purpose: a class usually ends before its recording has finished building,
+  // and the render neither knows nor cares whether anyone is listening.
+  renderQueue.onStatus((status) => {
+    try {
+      io.to(status.meetingId).emit("recording-status", status);
+    } catch (err) {
+      log.error("recording status broadcast failed", err);
+    }
+  });
+
   io.on("connection", (socket) => {
     log.info("client connected", { socketId: socket.id });
     socket.data.peerId = null;
@@ -444,35 +459,21 @@ function attachSocketHandlers(io) {
     });
 
     /**
-     * Stopping answers as soon as the capture has ended, then lays the file out
-     * in the background and announces it when it is ready.
+     * Stopping answers as soon as the capture is safely on disk.
      *
-     * Waiting for the whole pipeline meant the button did nothing visible for as
-     * long as ffmpeg took, so it got pressed again and again -- and every press
-     * was another full teardown and layout of the same class, which corrupted
-     * the output and eventually took the server with it.
+     * The render is queued and runs in the background; progress arrives later as
+     * `recording-status` for anyone still here, and is readable at any time from
+     * /api/recordings/status. Nothing about it holds the teacher up -- they can
+     * close the tab the moment this returns.
      */
     socket.on("stop-recording", async (_payload, callback) => {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
         requireStaff(peer);
-        // Held before the await so the file that gets built is this recording,
-        // not one started while this one was still stopping.
-        const recorder = room.recorder;
         const rec = await room.stopRecording();
         io.to(room.id).emit("recording-stopped", rec);
         ack(callback, { ok: true, recording: rec });
-
-        room
-          .finalizeRecording(recorder)
-          .then((final) => {
-            io.to(room.id).emit("recording-ready", final);
-          })
-          .catch((err) => {
-            log.error("finalize recording failed", err);
-            io.to(room.id).emit("recording-failed", { error: err.message });
-          });
       } catch (err) {
         log.error("stop-recording failed", err);
         ack(callback, { ok: false, error: err.message });

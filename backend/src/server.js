@@ -264,6 +264,27 @@ async function main() {
       },
     );
 
+    /**
+     * Where every recording got to: queued, processing, completed or failed.
+     *
+     * Readable from anywhere, at any time, without a socket — the teacher who
+     * pressed stop and closed the tab can come back later and see whether their
+     * class finished building. `?meetingId=` narrows it to one class.
+     */
+    app.get("/api/recordings/status", (req, res) => {
+      try {
+        const renderQueue = require("./recording/renderQueue");
+        const meetingId = req.query.meetingId ? String(req.query.meetingId) : null;
+        const jobs = renderQueue
+          .listJobs()
+          .filter((j) => !meetingId || j.meetingId === meetingId);
+        res.json({ ok: true, jobs });
+      } catch (err) {
+        log.error("/api/recordings/status failed", err);
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
+
     app.get("/api/recordings", (req, res) => {
       try {
         const fs = require("fs");
@@ -303,6 +324,11 @@ async function main() {
 
     attachSocketHandlers(io);
     startIdleReaper(io);
+
+    // A restart used to lose any class that was still being built: the capture
+    // sat on disk with nobody left who knew it needed rendering.
+    const resumed = require("./recording/renderQueue").resumePending();
+    if (resumed) log.warn("resumed recordings left unrendered by the last shutdown", { resumed });
 
     server.listen(PORT, HOST, () => {
       log.info(`backend listening on http://${HOST}:${PORT}`);

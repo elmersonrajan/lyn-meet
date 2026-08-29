@@ -20,7 +20,7 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 
 const {
-  buildComposeArgs, buildSdp, buildIngestArgs, buildBoardVideoArgs,
+  buildComposeArgs, buildSdp, buildIngestArgs, buildBoardVideoArgs, buildAudioMixArgs,
 } = require("../src/recording/ffmpegArgs");
 const { recordingFileName, dateStamp } = require("../src/recording/recordingName");
 const { writeBoardFrame } = require("../src/recording/whiteboardFrame");
@@ -183,10 +183,13 @@ function main() {
     ok("has video and audio", (i2?.videoCount || 0) >= 1 && (i2?.audioCount || 0) >= 1, JSON.stringify(i2));
     ok("output is the layout size", i2?.width === 1280 && i2?.height === 720, `${i2?.width}x${i2?.height}`);
 
-    // ---- Extra voices. A student or coordinator who unmutes mid-class is
+    // ---- The audio step. A student or coordinator who unmutes mid-class is
     // captured separately and mixed back in at the offset they started, so the
     // class is no longer just the teacher answering questions nobody can hear.
-    console.log("\n4b. compose — student and coordinator voices mixed in");
+    // Built as its own pass: when this shared a command with the layout, one
+    // awkward voice file failed the whole thing and the class saved silently
+    // with no student audio at all.
+    console.log("\n4b. audio — teacher, student and coordinator mixed");
     const voiceA = path.join(dir, "voice-a.mkv");
     const voiceB = path.join(dir, "voice-b.mkv");
     for (const [file, freq] of [[voiceA, 660], [voiceB, 880]]) {
@@ -198,23 +201,37 @@ function main() {
     }
     ok("synthetic voices created", fs.existsSync(voiceA) && fs.existsSync(voiceB));
 
-    const outV = path.join(dir, "voices.mp4");
-    const argsV = buildComposeArgs({
-      livePath: live, boardVideo, outputPath: outV,
-      camIndex: 0, screenIndex: null, hasAudio: true,
+    const mixed = path.join(dir, "mixed.m4a");
+    const argsMix = buildAudioMixArgs({
+      livePath: live, hasAudio: true, outputPath: mixed,
       voices: [
         { path: voiceA, offsetMs: 0 },
         { path: voiceB, offsetMs: 900 },
       ],
     });
+    const rmix = run("ffmpeg", argsMix);
+    ok("ffmpeg exited cleanly", rmix.ok, rmix.out.slice(-600));
+    const filterMix = argsMix[argsMix.indexOf("-filter_complex") + 1];
+    ok("a late voice is delayed to where it started", /adelay=900:all=1/.test(filterMix), filterMix);
+    ok("all three microphones are mixed", /amix=inputs=3/.test(filterMix), filterMix);
+    ok("the teacher is not quietened by the others", /normalize=0/.test(filterMix), filterMix);
+    const imix = probe(mixed);
+    ok("mixed audio is playable", (fs.existsSync(mixed) ? fs.statSync(mixed).size : 0) > 2000);
+    ok("mixed audio has one track", imix?.audioCount === 1, JSON.stringify(imix));
+    ok("mix spans the whole class", Math.abs((imix?.duration || 0) - DUR) < 1.5, `got ${imix?.duration}s`);
+
+    console.log("\n4b2. compose — the mixed audio carried into the final file");
+    const outV = path.join(dir, "voices.mp4");
+    const argsV = buildComposeArgs({
+      livePath: live, boardVideo, outputPath: outV,
+      camIndex: 0, screenIndex: null, hasAudio: true, audioPath: mixed,
+    });
     const rv = run("ffmpeg", argsV);
     ok("ffmpeg exited cleanly", rv.ok, rv.out.slice(-600));
-    const filterV = argsV[argsV.indexOf("-filter_complex") + 1];
-    ok("a late voice is delayed to where it started", /adelay=900:all=1/.test(filterV), filterV);
-    ok("all three voices are mixed", /amix=inputs=3/.test(filterV), filterV);
+    ok("the mixed track is used, not the raw teacher audio", argsV.includes("copy"), argsV.join(" "));
     const iv = probe(outV);
     ok("output is playable", (fs.existsSync(outV) ? fs.statSync(outV).size : 0) > 2000);
-    ok("output still has one audio track", iv?.audioCount === 1, JSON.stringify(iv));
+    ok("output has exactly one audio track", iv?.audioCount === 1, JSON.stringify(iv));
     ok("duration matches the source", Math.abs((iv?.duration || 0) - DUR) < 1.5, `got ${iv?.duration}s`);
 
     // ---- A short share that began after recording started. The class must
@@ -276,12 +293,17 @@ function main() {
     // ---- The ingest command must at least be accepted by this ffmpeg build.
     console.log("\n7. ingest arguments are valid for this ffmpeg");
     const sdp = buildSdp({
-      audio: { remoteRtpPort: 20001, payloadType: 111, codecName: "opus", clockRate: 48000, channels: 2 },
-      cam: { remoteRtpPort: 20002, payloadType: 96, codecName: "VP8", clockRate: 90000 },
+      audio: { remoteRtpPort: 20002, payloadType: 111, codecName: "opus", clockRate: 48000, channels: 2 },
+      cam: { remoteRtpPort: 20004, payloadType: 96, codecName: "VP8", clockRate: 90000 },
     });
     const sdpPath = path.join(dir, "test.sdp");
     fs.writeFileSync(sdpPath, sdp);
     ok("sdp has audio and video", /m=audio /.test(sdp) && /m=video /.test(sdp));
+    // Every stream needs an even RTP port so RTCP can have the odd one above
+    // it. Sharing one port is what let sender reports be read as media, which
+    // is what froze the finished video every few seconds.
+    const ports = [...sdp.matchAll(/^m=\w+ (\d+)/gm)].map((m) => Number(m[1]));
+    ok("rtp ports are even, leaving room for rtcp", ports.every((p) => p % 2 === 0), String(ports));
     const ing = buildIngestArgs({ sdpPath, outputPath: path.join(dir, "x.mkv"), hasAudio: true });
     // No RTP will arrive, so a timeout is the expected outcome; an unknown
     // option or bad flag reports differently and is what we are looking for.
