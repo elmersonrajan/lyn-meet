@@ -254,9 +254,23 @@ async function renderJob(job) {
     const audio = await makeMixedAudio(job, hasAudio);
     if (audio.degraded) dropped.push("student and coordinator audio");
 
-    const sideScreenRaw = (job.sides || []).find(
-      (s) => s.kind === "video" && fileSize(s.path) >= MIN_USEFUL_BYTES,
-    );
+    const screenSides = (job.sides || []).filter((s) => s.kind === "video");
+    const sideScreenRaw = screenSides.find((s) => fileSize(s.path) >= MIN_USEFUL_BYTES);
+    // An empty screen capture used to be dropped without a word, so a class
+    // with a share in it produced a file with no share and no explanation.
+    for (const s of screenSides) {
+      if (s === sideScreenRaw) continue;
+      log.error("a screen share was captured but holds nothing — leaving it out", {
+        id: job.id,
+        who: s.name,
+        path: s.path,
+        bytes: fileSize(s.path),
+      });
+      dropped.push(`screen share from ${s.name}`);
+    }
+    if (!screenSides.length && job.screenIndex == null) {
+      log.info("no screen share was captured for this class", { id: job.id });
+    }
     const sideScreen = sideScreenRaw
       ? { path: sideScreenRaw.path, offsetMs: sideScreenRaw.offsetMs }
       : null;

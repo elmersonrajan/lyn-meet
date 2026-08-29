@@ -341,8 +341,16 @@ function buildComposeArgs(opts) {
     "-r", String(fps),
   );
   // Already AAC from the mix step, so copying avoids a second lossy pass.
-  if (audioInput != null) args.push("-c:a", "copy");
-  else if (hasAudio) args.push("-c:a", "aac", "-b:a", "160k", "-ar", "48000");
+  if (audioInput != null) {
+    args.push("-c:a", "copy");
+  } else if (hasAudio) {
+    args.push("-c:a", "aac", "-b:a", "160k", "-ar", "48000");
+    // Capture timestamps come from the wall clock, so a packet arriving out of
+    // order carries a timestamp behind the one before it. Without this the
+    // encoder is handed audio that moves backwards, forces it monotonic, and
+    // the class drifts against the picture.
+    args.push("-af", "aresample=async=1:first_pts=0");
+  }
 
   args.push(
     // Audio is the reliable clock, so video is fitted to it rather than the

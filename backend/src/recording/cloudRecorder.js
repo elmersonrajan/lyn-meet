@@ -275,6 +275,20 @@ class CloudRecorder {
     return { ...info, remoteRtpPort };
   }
 
+  /** Appends to the recording's own ffmpeg log, beside the finished file. */
+  _appendLog(label, text) {
+    if (!this.logPath) return;
+    try {
+      fs.appendFileSync(
+        this.logPath,
+        `\n=== ${label} @ ${new Date().toISOString()} ===\n${text}\n`,
+        "utf8",
+      );
+    } catch (err) {
+      log.error("could not write the ffmpeg log", err);
+    }
+  }
+
   /**
    * Captures one stream that began after recording had already started.
    *
@@ -308,14 +322,47 @@ class CloudRecorder {
     fs.writeFileSync(sdpPath, buildSdp(kind === "audio" ? { audio: info } : { cam: info }), "utf8");
 
     const args = buildIngestArgs({ sdpPath, outputPath: outPath, hasAudio: kind === "audio" });
-    log.info("ffmpeg side", args.join(" "));
+    const label = `side:${kind}:${peer.name}`;
+    // Into the recording's own ffmpeg log, not just the server log. A screen
+    // share that failed to capture used to leave no trace anywhere near the
+    // recording, so the finished file simply had no screen in it and nothing
+    // said why.
+    this._appendLog(label, args.join(" "));
     const startedAt = Date.now();
     const proc = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
+    let errText = "";
     proc.stderr.on("data", (c) => {
       const line = String(c).trim();
-      if (line) log.info(`ffmpeg side:${kind}`, line);
+      if (!line) return;
+      errText += `${line}\n`;
+      log.info(`ffmpeg ${label}`, line);
     });
-    proc.on("error", (err) => log.error("ffmpeg side error", err));
+    proc.on("error", (err) => {
+      log.error("ffmpeg side error", err);
+      this._appendLog(label, `spawn error: ${err.message}`);
+    });
+    proc.on("exit", (code, signal) => {
+      this._appendLog(
+        label,
+        `exit: code=${code} signal=${signal} bytes=${fileSize(outPath)}\n${errText}`,
+      );
+    });
+
+    // A capture that receives nothing is the failure worth knowing about, and
+    // it is silent by nature: ffmpeg sits there waiting quite happily.
+    setTimeout(() => {
+      if (!this.active) return;
+      const bytes = fileSize(outPath);
+      if (bytes < 2000) {
+        log.warn("a side capture has received almost nothing", {
+          who: peer.name,
+          kind,
+          port,
+          bytes,
+        });
+        this._appendLog(label, `WARNING: only ${bytes} bytes after 6s on port ${port}`);
+      }
+    }, 6000);
 
     await wait(INGEST_WARMUP_MS);
     await consumer.resume();
@@ -385,17 +432,29 @@ class CloudRecorder {
    * whoever is sharing.
    */
   async addScreen(peer) {
+    // Every refusal says which one it was. A share that silently never made it
+    // into the recording gave no clue as to which of these it tripped over.
+    const decline = (why) => {
+      log.warn("screen share not captured", { who: peer?.name, why });
+      this._appendLog("side:screen", `not captured: ${why}`);
+      return null;
+    };
     try {
-      if (!this.active || !peer) return null;
+      if (!peer) return null;
+      if (!this.active) return decline("the recording is not running");
       // A share running at start already has a place in the main capture.
       if (this.tracks.has("screen")) return null;
-      if (this.sides.some((s) => s.kind === "video")) return null;
-      if (this.sides.length >= MAX_SIDES) return null;
+      if (this.sides.some((s) => s.kind === "video")) {
+        return decline("a screen share is already being captured");
+      }
+      if (this.sides.length >= MAX_SIDES) return decline(`already at the limit of ${MAX_SIDES}`);
       const producer = this.room.findProducer(peer.id, "screen");
-      if (!producer) return null;
+      if (!producer) return decline("no screen producer was found for them");
+      log.action("capturing a screen share", { who: peer.name, role: peer.role });
       return await this._startSide({ producer, peer, kind: "video" });
     } catch (err) {
       log.error("addScreen failed — recording continues without the share", err);
+      this._appendLog("side:screen", `failed to start: ${err.message}`);
       return null;
     }
   }
@@ -419,7 +478,12 @@ class CloudRecorder {
           ? peer.role === "teacher" || peer.role === "coordinator"
           : Boolean(teacher) && peer.id === teacher.id;
 
-      if (track && !track.consumer && owner) {
+      // Identity, not liveness. mediasoup reports a closed producer back from
+      // the worker asynchronously, so when a teacher reconnects the replacement
+      // producer usually arrives here *before* the old consumer has been marked
+      // dead. Waiting for that to happen skipped the re-attach altogether, and
+      // the teacher's camera was missing from the rest of the class.
+      if (track && owner && track.producerId !== producer.id) {
         await this._reattach(producer, source, track);
         return;
       }
@@ -440,6 +504,19 @@ class CloudRecorder {
    */
   async _reattach(producer, source, track) {
     try {
+      // The old consumer has to go first. Two consumers feeding one port send
+      // two different SSRCs interleaved, which ffmpeg reads as one hopelessly
+      // corrupt stream -- worse than the gap this is repairing.
+      const previous = track.consumer;
+      track.consumer = null;
+      if (previous && !previous.closed) {
+        try {
+          previous.close();
+        } catch (err) {
+          log.error("closing the replaced consumer failed", err);
+        }
+      }
+
       const replacement = await this.room.router.createPlainTransport({
         listenInfo: { protocol: "udp", ip: "127.0.0.1" },
         rtcpMux: false,
