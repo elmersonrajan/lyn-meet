@@ -310,8 +310,8 @@ class Room {
   }
 
   /**
-   * Ends the capture and returns straight away. Laying the file out is a
-   * separate step so the teacher is not left waiting on ffmpeg.
+   * Ends the capture and returns as soon as it is safely on disk. Rendering is
+   * queued and happens in the background, so nothing here waits on ffmpeg.
    */
   async stopRecording() {
     try {
@@ -319,23 +319,6 @@ class Room {
       return await this.recorder.stopCapture();
     } catch (err) {
       log.error("stopRecording failed", err);
-      throw err;
-    }
-  }
-
-  /**
-   * Produces the final file. Safe to call repeatedly; joins the run in progress.
-   *
-   * Takes the recorder rather than reading this.recorder, because a new
-   * recording started while the previous one was being saved would otherwise
-   * see the fresh recorder finalised out from under it.
-   */
-  async finalizeRecording(recorder = this.recorder) {
-    try {
-      if (!recorder) return null;
-      return await recorder.finalize();
-    } catch (err) {
-      log.error("finalizeRecording failed", err);
       throw err;
     }
   }
@@ -438,11 +421,10 @@ async function closeRoom(room) {
       if (poll.timer) clearTimeout(poll.timer);
       poll.timer = null;
     }
-    // Stop the capture before the router goes, but let the layout finish on its
-    // own: closing a session must not sit waiting on ffmpeg.
-    if (room.recorder) {
+    // Stop the capture before the router goes. The render is already queued and
+    // runs on its own, so closing a session never waits on ffmpeg.
+    if (room.recorder && room.recorder.active) {
       await room.stopRecording();
-      room.finalizeRecording().catch((err) => log.error("finalize after close failed", err));
     }
     // Anyone still in the room when it closes needs their session ended, or
     // they would read as permanently present. A peer already marked

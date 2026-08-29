@@ -71,6 +71,67 @@ function buildSdp({ audio, cam, screen }) {
 }
 
 /**
+ * Mixes every microphone in the class into one audio track, as its own step.
+ *
+ * The teacher comes from the main capture; each student or coordinator who
+ * spoke comes from a capture of their own and is delayed to the moment they
+ * started, measured against the same server clock. normalize=0 keeps the
+ * teacher at full volume instead of quietening them whenever anyone else is
+ * unmuted.
+ *
+ * Separated from the layout on purpose. When the two were one command, an
+ * awkward voice file failed the whole thing, the layout fell back to a simpler
+ * arrangement, and the class was saved with no student audio at all and only a
+ * warning in the log -- which is indistinguishable, from the outside, from
+ * never having recorded them.
+ *
+ * @returns {string[]|null} args, or null if there is no audio anywhere
+ */
+function buildAudioMixArgs({ livePath, hasAudio, voices = [], outputPath }) {
+  const args = ["-y", "-loglevel", "warning"];
+  const chains = [];
+  const labels = [];
+  let input = 0;
+
+  if (hasAudio) {
+    args.push("-i", livePath);
+    chains.push(`[${input}:a:0]aresample=async=1:first_pts=0[a_teacher]`);
+    labels.push("a_teacher");
+    input += 1;
+  }
+  voices.forEach((voice, i) => {
+    args.push("-i", voice.path);
+    const ms = Math.max(0, Math.round(voice.offsetMs || 0));
+    const delay = ms > 0 ? `adelay=${ms}:all=1,` : "";
+    chains.push(`[${input}:a]${delay}aresample=async=1[a_v${i}]`);
+    labels.push(`a_v${i}`);
+    input += 1;
+  });
+
+  if (!labels.length) return null;
+
+  let out = labels[0];
+  if (labels.length > 1) {
+    chains.push(
+      `${labels.map((l) => `[${l}]`).join("")}` +
+        `amix=inputs=${labels.length}:duration=longest:dropout_transition=0:normalize=0[a_out]`,
+    );
+    out = "a_out";
+  }
+
+  args.push(
+    "-filter_complex", chains.join(";"),
+    "-map", `[${out}]`,
+    "-c:a", "aac",
+    "-b:a", "160k",
+    "-ar", "48000",
+    "-ac", "2",
+    outputPath,
+  );
+  return args;
+}
+
+/**
  * Live ingest: RTP in, one Matroska file out, streams copied where possible.
  *
  * Flag choices that matter:
@@ -84,6 +145,10 @@ function buildSdp({ audio, cam, screen }) {
  * - `-thread_queue_size 1024` stops UDP packets being dropped while ffmpeg
  *   sets up, which previously lost the opening video keyframe and left video
  *   starting seconds after audio.
+ * - A large `-buffer_size` and `-reorder_queue_size`. The receive buffer the
+ *   kernel gives a UDP socket by default is far smaller than a burst of 720p
+ *   video, and once it overflows the loss shows up as a freeze in the finished
+ *   file. These cost memory and nothing else.
  * - Matroska, not MP4: MP4 needs a trailer written on clean exit, so a killed
  *   process leaves an unplayable file. Matroska stays readable.
  * - Video is copied rather than re-encoded here; all scaling and compositing
@@ -97,6 +162,9 @@ function buildIngestArgs({ sdpPath, outputPath, hasAudio }) {
     "-fflags", "+discardcorrupt",
     "-use_wallclock_as_timestamps", "1",
     "-thread_queue_size", "1024",
+    "-buffer_size", "16777216",
+    "-reorder_queue_size", "2048",
+    "-max_delay", "2000000",
     "-analyzeduration", "10000000",
     "-probesize", "10000000",
     "-i", sdpPath,
@@ -167,11 +235,14 @@ function buildBoardVideoArgs({ pattern, manifest, framesFps = 1, outputPath, wid
  * before being mixed in. Every capture is stamped from the one server clock, so
  * the offset is all that is needed to line them up.
  *
+ * Audio arrives already mixed, as a finished file from the audio step, so this
+ * pass only ever rewrites the video track.
+ *
  * @param {{
  *   livePath: string, boardVideo: string|null, outputPath: string,
  *   camIndex: number|null, screenIndex: number|null, hasAudio: boolean,
+ *   audioPath?: string|null,
  *   sideScreen?: {path:string, offsetMs:number}|null,
- *   voices?: Array<{path:string, offsetMs:number}>,
  *   width?: number, height?: number, fps?: number,
  * }} opts
  */
@@ -183,8 +254,8 @@ function buildComposeArgs(opts) {
     camIndex,
     screenIndex,
     hasAudio,
+    audioPath = null,
     sideScreen = null,
-    voices = [],
     width = LAYOUT_W,
     height = LAYOUT_H,
     fps = FPS,
@@ -201,11 +272,8 @@ function buildComposeArgs(opts) {
   const screenInput = sideScreen ? nextInput++ : null;
   if (sideScreen) args.push("-i", sideScreen.path);
 
-  const voiceInputs = voices.map((voice) => {
-    const index = nextInput++;
-    args.push("-i", voice.path);
-    return { index, offsetMs: Math.max(0, Math.round(voice.offsetMs || 0)) };
-  });
+  const audioInput = audioPath ? nextInput++ : null;
+  if (audioPath) args.push("-i", audioPath);
 
   const fit = (w, h) =>
     `scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
@@ -256,34 +324,14 @@ function buildComposeArgs(opts) {
     videoLabel = "withcam";
   }
 
-  // Every voice in the room becomes one track: the teacher from the main
-  // capture, and each student or coordinator who spoke from their own, delayed
-  // to the moment they joined in. normalize=0 keeps the teacher at full volume
-  // instead of quietening them every time somebody else is unmuted.
-  const audioLabels = [];
-  if (hasAudio) {
-    chains.push(`[0:a:0]aresample=async=1:first_pts=0[a_main]`);
-    audioLabels.push("a_main");
-  }
-  voiceInputs.forEach((voice, i) => {
-    const delay = voice.offsetMs > 0 ? `adelay=${voice.offsetMs}:all=1,` : "";
-    chains.push(`[${voice.index}:a]${delay}aresample=async=1[a_v${i}]`);
-    audioLabels.push(`a_v${i}`);
-  });
-
-  let audioLabel = null;
-  if (audioLabels.length === 1) {
-    audioLabel = audioLabels[0];
-  } else if (audioLabels.length > 1) {
-    chains.push(
-      `${audioLabels.map((l) => `[${l}]`).join("")}` +
-        `amix=inputs=${audioLabels.length}:duration=longest:dropout_transition=0:normalize=0[a_out]`,
-    );
-    audioLabel = "a_out";
-  }
-
   args.push("-filter_complex", chains.join(";"), "-map", `[${videoLabel}]`);
-  if (audioLabel) args.push("-map", `[${audioLabel}]`);
+
+  // Prefer the mixed track: it already holds every microphone, placed in time.
+  // Falling back to the raw teacher audio keeps a class usable when the mix
+  // step could not run.
+  const takesAudio = audioInput != null || hasAudio;
+  if (audioInput != null) args.push("-map", `${audioInput}:a:0`);
+  else if (hasAudio) args.push("-map", "0:a:0");
 
   args.push(
     "-c:v", "libx264",
@@ -292,7 +340,9 @@ function buildComposeArgs(opts) {
     "-pix_fmt", "yuv420p",
     "-r", String(fps),
   );
-  if (audioLabel) args.push("-c:a", "aac", "-b:a", "128k", "-ar", "48000");
+  // Already AAC from the mix step, so copying avoids a second lossy pass.
+  if (audioInput != null) args.push("-c:a", "copy");
+  else if (hasAudio) args.push("-c:a", "aac", "-b:a", "160k", "-ar", "48000");
 
   args.push(
     // Audio is the reliable clock, so video is fitted to it rather than the
@@ -303,7 +353,7 @@ function buildComposeArgs(opts) {
   );
   // Only needed when the base is an endless colour source; without it ffmpeg
   // would have no reason to ever stop.
-  if (needsShortest) args.push("-shortest");
+  if (needsShortest && takesAudio) args.push("-shortest");
   args.push(outputPath);
   return args;
 }
@@ -313,6 +363,7 @@ module.exports = {
   buildSdp,
   buildIngestArgs,
   buildBoardVideoArgs,
+  buildAudioMixArgs,
   buildComposeArgs,
   LAYOUT_W,
   LAYOUT_H,

@@ -10,6 +10,7 @@ import Whiteboard from "./Whiteboard.jsx";
 import ScreenShare from "./ScreenShare.jsx";
 import ChatPanel from "./ChatPanel.jsx";
 import RemoteAudio from "./RemoteAudio.jsx";
+import RecordingStatus from "./RecordingStatus.jsx";
 import AttendancePanel from "./AttendancePanel.jsx";
 import MeetingInfo from "./MeetingInfo.jsx";
 import { syncUrlToMeeting } from "../services/meetingLink.js";
@@ -36,6 +37,10 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   // Only guards the moment a request is in flight. Building the file is the
   // server's business and the teacher is never held up by it.
   const [recBusy, setRecBusy] = useState(false);
+  // Progress of recordings the server is still building. Purely informational:
+  // the teacher may close the tab as soon as they have stopped, and the render
+  // carries on regardless.
+  const [recJobs, setRecJobs] = useState(joinPayload.recordingJobs || []);
   const [toast, setToast] = useState("");
   const [clipUrl, setClipUrl] = useState("");
   const [teacherDisconnected, setTeacherDisconnected] = useState(false);
@@ -152,13 +157,16 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     };
     const onRecStop = () => {
       setRecording(false);
-      show("Recording saved");
+      show("Recording saved — the server is preparing the video");
     };
-    // The class was already told it is saved. Nothing more is needed unless it
-    // turns out not to be, which they do need to hear about.
-    const onRecReady = () => {};
-    const onRecFailed = ({ error }) => {
-      show(error ? `Recording could not be saved: ${error}` : "Recording could not be saved");
+    const onRecStatus = (job) => {
+      setRecJobs((prev) => [job, ...prev.filter((j) => j.id !== job.id)]);
+      if (job.status === "completed") {
+        show(job.file ? `Recording ready: ${job.file}` : "Recording ready");
+      }
+      if (job.status === "failed") {
+        show(job.error ? `Recording failed: ${job.error}` : "Recording could not be prepared");
+      }
     };
     const onTeacherDown = (payload) => {
       setTeacherDisconnected(true);
@@ -199,8 +207,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     socket.on("hands-cleared", onHandsCleared);
     socket.on("recording-started", onRecStart);
     socket.on("recording-stopped", onRecStop);
-    socket.on("recording-ready", onRecReady);
-    socket.on("recording-failed", onRecFailed);
+    socket.on("recording-status", onRecStatus);
     socket.on("teacher-disconnected", onTeacherDown);
     socket.on("peer-reconnected", onTeacherBack);
     socket.on("session-closed", onClosed);
@@ -222,8 +229,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       socket.off("hands-cleared", onHandsCleared);
       socket.off("recording-started", onRecStart);
       socket.off("recording-stopped", onRecStop);
-      socket.off("recording-ready", onRecReady);
-      socket.off("recording-failed", onRecFailed);
+      socket.off("recording-status", onRecStatus);
       socket.off("teacher-disconnected", onTeacherDown);
       socket.off("peer-reconnected", onTeacherBack);
       socket.off("session-closed", onClosed);
@@ -377,6 +383,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       <div className="room-frame">
         <div className="stage-wrap">
           {recording ? <div className="rec-pill">REC CLOUD</div> : null}
+          {isStaff ? <RecordingStatus jobs={recJobs} /> : null}
           {isStaff ? (
             <div className="stage-tools">
               <button
