@@ -530,9 +530,6 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .tbtn.live { background: #fdf2f2; border-color: #e6a8a8; color: var(--danger); }
 .tbtn.attn { border-color: var(--warn); background: #fff8ec; color: #8a5200; }
 .tbtn:disabled { cursor: default; opacity: 0.7; }
-/* Saving is work in progress, not a disabled control: it stays legible so it
-   reads as "wait", not "broken". */
-.tbtn.busy { background: #fff8ec; border-color: var(--warn); color: #8a5200; opacity: 1; }
 
 .tbtn .dot {
   position: absolute;
@@ -1156,7 +1153,6 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   font-size: 12px;
   font-weight: 700;
 }
-.rec-pill.saving { background: var(--warn); color: #4a2c00; }
 
 .remote-audio-sinks {
   position: absolute;

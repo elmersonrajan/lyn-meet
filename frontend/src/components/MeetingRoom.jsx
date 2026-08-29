@@ -33,9 +33,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   const [chatTab, setChatTab] = useState("chat");
   const [unreadChat, setUnreadChat] = useState(0);
   const [recording, setRecording] = useState(Boolean(joinPayload.recording?.active));
-  // The capture has ended and the server is building the file. Kept apart from
-  // `recording` so the button can say what is actually happening.
-  const [recSaving, setRecSaving] = useState(Boolean(joinPayload.recording?.finalizing));
+  // Only guards the moment a request is in flight. Building the file is the
+  // server's business and the teacher is never held up by it.
   const [recBusy, setRecBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [clipUrl, setClipUrl] = useState("");
@@ -149,20 +148,16 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     };
     const onRecStart = () => {
       setRecording(true);
-      setRecSaving(false);
       show("Cloud recording started");
     };
     const onRecStop = () => {
       setRecording(false);
-      setRecSaving(true);
-      show("Recording stopped — saving on the server");
+      show("Recording saved");
     };
-    const onRecReady = (rec) => {
-      setRecSaving(false);
-      show(rec?.file ? `Recording saved: ${rec.file}` : "Recording saved on the server");
-    };
+    // The class was already told it is saved. Nothing more is needed unless it
+    // turns out not to be, which they do need to hear about.
+    const onRecReady = () => {};
     const onRecFailed = ({ error }) => {
-      setRecSaving(false);
       show(error ? `Recording could not be saved: ${error}` : "Recording could not be saved");
     };
     const onTeacherDown = (payload) => {
@@ -256,13 +251,12 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   // full stop of the same recording, which is what corrupted the file and
   // overloaded the box.
   const onToggleRecord = async () => {
-    if (!isStaff || recBusy || recSaving) return;
+    if (!isStaff || recBusy) return;
     setRecBusy(true);
     try {
       if (recording) {
         await emitAck("stop-recording", {});
         setRecording(false);
-        setRecSaving(true);
       } else {
         await emitAck("start-recording", {});
       }
@@ -382,11 +376,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       <RemoteAudio items={media.remoteAudio} />
       <div className="room-frame">
         <div className="stage-wrap">
-          {recording ? (
-            <div className="rec-pill">REC CLOUD</div>
-          ) : recSaving ? (
-            <div className="rec-pill saving">SAVING…</div>
-          ) : null}
+          {recording ? <div className="rec-pill">REC CLOUD</div> : null}
           {isStaff ? (
             <div className="stage-tools">
               <button
@@ -442,7 +432,6 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         camOn={media.camOn}
         micOn={media.micOn}
         recording={recording}
-        recSaving={recSaving}
         recBusy={recBusy}
         micLocked={micLocked}
         unreadChat={unreadChat}

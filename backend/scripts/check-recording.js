@@ -163,10 +163,10 @@ function main() {
     // symptom this pipeline exists to avoid.
     ok("duration matches the source", Math.abs((i1?.duration || 0) - DUR) < 1.5, `got ${i1?.duration}s, expected ~${DUR}s`);
 
-    // ---- Layout 2: everything at once. A screen share takes the main area and
-    // the board keeps an inset of its own, so nothing the teacher showed is
-    // dropped from the class.
-    console.log("\n4. compose — screen main + board inset + camera inset");
+    // ---- Layout 2: everything at once. The board is the base layer for the
+    // whole class and the share is layered over it, so nothing the teacher
+    // showed is dropped.
+    console.log("\n4. compose — screen over the whiteboard + camera inset");
     const out2 = path.join(dir, "screen.mp4");
     const args2 = buildComposeArgs({
       livePath: live, boardVideo, outputPath: out2,
@@ -175,12 +175,77 @@ function main() {
     const r2 = run("ffmpeg", args2);
     ok("ffmpeg exited cleanly", r2.ok, r2.out.slice(-500));
     const filter2 = args2[args2.indexOf("-filter_complex") + 1];
-    ok("the board is still in the layout", /\[board\]/.test(filter2), filter2);
+    ok("the whiteboard is the base layer", /\[1:v\][^;]*\[base\]/.test(filter2), filter2);
+    ok("the share is layered over it", /\[scr\]/.test(filter2), filter2);
     ok("the camera is still in the layout", /\[cam\]/.test(filter2), filter2);
     const i2 = probe(out2);
     ok("output is playable", (fs.existsSync(out2) ? fs.statSync(out2).size : 0) > 2000);
     ok("has video and audio", (i2?.videoCount || 0) >= 1 && (i2?.audioCount || 0) >= 1, JSON.stringify(i2));
     ok("output is the layout size", i2?.width === 1280 && i2?.height === 720, `${i2?.width}x${i2?.height}`);
+
+    // ---- Extra voices. A student or coordinator who unmutes mid-class is
+    // captured separately and mixed back in at the offset they started, so the
+    // class is no longer just the teacher answering questions nobody can hear.
+    console.log("\n4b. compose — student and coordinator voices mixed in");
+    const voiceA = path.join(dir, "voice-a.mkv");
+    const voiceB = path.join(dir, "voice-b.mkv");
+    for (const [file, freq] of [[voiceA, 660], [voiceB, 880]]) {
+      run("ffmpeg", [
+        "-y", "-loglevel", "error",
+        "-f", "lavfi", "-i", `sine=frequency=${freq}:sample_rate=48000:duration=2`,
+        "-c:a", "libopus", "-t", "2", file,
+      ]);
+    }
+    ok("synthetic voices created", fs.existsSync(voiceA) && fs.existsSync(voiceB));
+
+    const outV = path.join(dir, "voices.mp4");
+    const argsV = buildComposeArgs({
+      livePath: live, boardVideo, outputPath: outV,
+      camIndex: 0, screenIndex: null, hasAudio: true,
+      voices: [
+        { path: voiceA, offsetMs: 0 },
+        { path: voiceB, offsetMs: 900 },
+      ],
+    });
+    const rv = run("ffmpeg", argsV);
+    ok("ffmpeg exited cleanly", rv.ok, rv.out.slice(-600));
+    const filterV = argsV[argsV.indexOf("-filter_complex") + 1];
+    ok("a late voice is delayed to where it started", /adelay=900:all=1/.test(filterV), filterV);
+    ok("all three voices are mixed", /amix=inputs=3/.test(filterV), filterV);
+    const iv = probe(outV);
+    ok("output is playable", (fs.existsSync(outV) ? fs.statSync(outV).size : 0) > 2000);
+    ok("output still has one audio track", iv?.audioCount === 1, JSON.stringify(iv));
+    ok("duration matches the source", Math.abs((iv?.duration || 0) - DUR) < 1.5, `got ${iv?.duration}s`);
+
+    // ---- A short share that began after recording started. The class must
+    // still run its full length: layering the share over the board rather than
+    // making it the base is what stops a two-minute share from ending an
+    // hour-long recording after two minutes.
+    console.log("\n4c. compose — a short screen share that started mid-class");
+    const shortShare = path.join(dir, "share.mkv");
+    run("ffmpeg", [
+      "-y", "-loglevel", "error",
+      "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25:duration=1",
+      "-c:v", "libx264", "-preset", "ultrafast", "-t", "1", shortShare,
+    ]);
+    const outS = path.join(dir, "late-screen.mp4");
+    const argsS = buildComposeArgs({
+      livePath: live, boardVideo, outputPath: outS,
+      camIndex: 0, screenIndex: null, hasAudio: true,
+      sideScreen: { path: shortShare, offsetMs: 1000 },
+    });
+    const rs = run("ffmpeg", argsS);
+    ok("ffmpeg exited cleanly", rs.ok, rs.out.slice(-600));
+    const filterS = argsS[argsS.indexOf("-filter_complex") + 1];
+    ok("the share is held back until it began", /tpad=start_duration=1\.000/.test(filterS), filterS);
+    ok("the padding is transparent, not black", /color=0x00000000/.test(filterS), filterS);
+    ok("output is playable", (fs.existsSync(outS) ? fs.statSync(outS).size : 0) > 2000);
+    const is = probe(outS);
+    ok(
+      "a 1s share does not cut the class short",
+      Math.abs((is?.duration || 0) - DUR) < 1.0,
+      `got ${is?.duration}s, expected ~${DUR}s`,
+    );
 
     // ---- Layout 3: audio only, no camera and no screen.
     console.log("\n5. compose — board only, no camera");

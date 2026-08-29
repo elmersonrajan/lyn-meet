@@ -176,11 +176,11 @@ class Room {
       });
       peer.producers.set(producer.id, producer);
 
-      // An active recording is bound to the producer it started with, so it
-      // needs telling that this source now lives somewhere else.
+      // An active recording is bound to the producers it started with, so it
+      // needs telling about anything new.
       if (this.recorder && this.recorder.active) {
         this.recorder.onProducerAdded(peer, producer).catch((err) => {
-          log.error("recorder re-attach failed", err);
+          log.error("recorder update failed", err);
         });
       }
 
@@ -270,6 +270,12 @@ class Room {
       if (source === "audio") peer.audioMuted = false;
       if (source === "video") peer.videoOff = false;
       log.action("resumeProducer", { peerId: peer.id, source });
+
+      // Someone unmuting during a recording needs their own capture: the class
+      // used to have the teacher answering questions nobody could hear.
+      if (source === "audio" && this.recorder && this.recorder.active) {
+        this.recorder.addVoice(peer).catch((err) => log.error("recorder addVoice failed", err));
+      }
     } catch (err) {
       log.error("resumeProducer failed", err);
       throw err;
