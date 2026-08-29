@@ -231,6 +231,12 @@ class Room {
       if (peer.role === "student" && (source === "video" || source === "screen")) {
         throw new Error("Students cannot produce video or screen share");
       }
+      // An unrecognised source would be published under a name nothing looks
+      // for: never consumed, never recorded, and -- because replacement is by
+      // source -- capable of closing the wrong producer on its way in.
+      if (!["audio", "video", "screen"].includes(source)) {
+        throw new Error(`Unknown producer source "${source}"`);
+      }
       log.action("produce", { peerId: peer.id, kind, source, role: peer.role });
       const transport = peer.transports.get(transportId);
       if (!transport) throw new Error("Transport not found");
@@ -241,7 +247,17 @@ class Room {
       // late joiner subscribed to a track that would never send another packet.
       const stale = this.findProducer(peer.id, source);
       if (stale) {
-        log.info("replacing an existing producer", { peerId: peer.id, source, staleId: stale.id });
+        // Loud, because closing a producer is destructive and this is the only
+        // place it happens implicitly. If a camera is ever closed by a screen
+        // share arriving, this line is where it will be visible.
+        log.warn("closing an existing producer to replace it", {
+          peerId: peer.id,
+          name: peer.name,
+          source,
+          staleId: stale.id,
+          staleKind: stale.kind,
+          newKind: kind,
+        });
         try {
           stale.close();
         } catch (err) {

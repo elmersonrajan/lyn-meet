@@ -209,11 +209,20 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
             transport.on("produce", async ({ kind, rtpParameters, appData }, callback, errback) => {
               try {
                 console.log("[Mediasoup] produce", kind, appData);
+                // Never guess this. The server replaces the existing producer
+                // for whatever source it is told, so a screen share arriving
+                // labelled "video" would close the teacher's camera and take
+                // its place -- the camera would vanish and the share would
+                // never be recognised as a share.
+                const source = appData?.source;
+                if (!source) {
+                  throw new Error(`produce is missing appData.source for a ${kind} track`);
+                }
                 const res = await emitAck("produce", {
                   transportId: transport.id,
                   kind,
                   rtpParameters,
-                  source: appData?.source || kind,
+                  source,
                 });
                 callback({ id: res.id });
               } catch (err) {

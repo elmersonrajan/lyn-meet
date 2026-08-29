@@ -148,7 +148,12 @@ function attachSocketHandlers(io) {
     socket.on("join-room", async (payload, callback) => {
       try {
         const typedName = String(payload?.name || "").trim();
-        const meetingId = String(payload?.meetingId || "").trim();
+        // Upper case is the rule, and this is where it is enforced: the room is
+        // keyed by this string, so "neet26" and "NEET26" were two rooms, and
+        // anyone who typed it in lower case sat alone in an empty meeting. The
+        // browser upper-cases the field too, but a stale link or a direct call
+        // has to land in the same place.
+        const meetingId = String(payload?.meetingId || "").trim().toUpperCase();
         const role = normalizeRole(payload?.role);
         log.action("join-room", { typedName, meetingId, role, socketId: socket.id });
 
