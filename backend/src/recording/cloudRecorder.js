@@ -16,6 +16,9 @@ const RECORDINGS_DIR = path.resolve(
 const BOARD_FPS = Number(process.env.RECORDING_BOARD_FPS || 1);
 // Long enough for ffmpeg to bind its UDP sockets before any RTP is sent.
 const INGEST_WARMUP_MS = Number(process.env.RECORDING_WARMUP_MS || 700);
+// A ceiling on side captures, so a room where everyone unmutes cannot spawn an
+// unbounded number of ffmpeg processes.
+const MAX_SIDES = Number(process.env.RECORDING_MAX_SIDES || 12);
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -150,6 +153,11 @@ class CloudRecorder {
     // producer replaced mid-class can be reconnected to the port ffmpeg is
     // already reading.
     this.tracks = new Map();
+    // Anything that started after the class was already recording: a screen
+    // share, or a student or coordinator unmuting. The main capture's stream
+    // layout is fixed once ffmpeg has read the SDP, so these get a small
+    // capture of their own and are shifted into place at compose time.
+    this.sides = [];
 
     this.sdpPath = null;
     this.livePath = null;
@@ -168,10 +176,11 @@ class CloudRecorder {
     // frame durations written into the concat manifest.
     this.frames = [];
     this.lastBoardSignature = null;
-    // When ffmpeg started reading RTP. Board time zero is measured from here,
-    // not from the first snapshot, or the board would lag the audio by the
-    // ingest warm-up.
     this.captureStartedAt = null;
+    // The moment media actually began flowing into the capture. This is time
+    // zero for the finished file: the board and every side capture are placed
+    // relative to it.
+    this.mediaStartedAt = null;
 
     // Stream order inside the ingest file, needed by the compose filter graph.
     this.camIndex = null;
@@ -189,7 +198,11 @@ class CloudRecorder {
 
       const audioProducer = this.room.findProducer(teacher.id, "audio");
       const camProducer = this.room.findProducer(teacher.id, "video");
-      const screenProducer = this.room.findProducer(teacher.id, "screen");
+      // A coordinator shares their screen as readily as the teacher does, and
+      // only the teacher's was ever looked for, so a coordinator's share was
+      // seen live and then missing from the class entirely.
+      const screenPeer = this.room.getStaff().find((p) => this.room.findProducer(p.id, "screen"));
+      const screenProducer = screenPeer ? this.room.findProducer(screenPeer.id, "screen") : null;
 
       if (!audioProducer && !camProducer && !screenProducer) {
         throw new Error("Nothing to record — the teacher has no camera, mic or screen running");
@@ -254,8 +267,19 @@ class CloudRecorder {
 
       this.active = true;
       this.startedAt = Date.now();
+      this.mediaStartedAt = Date.now();
       this._writeBoardSnapshot();
       this.frameTimer = setInterval(() => this._writeBoardSnapshot(), 1000 / BOARD_FPS);
+
+      // Anyone already unmuted when recording began. Started without waiting so
+      // pressing record stays instant; each capture carries its own offset, so
+      // arriving a moment late costs a second of that voice, not its place in
+      // the class.
+      for (const peer of this.room.peers.values()) {
+        if (peer.id === teacher.id || peer.disconnected) continue;
+        if (peer.audioMuted) continue;
+        this.addVoice(peer).catch((err) => log.error("seed voice failed", err));
+      }
 
       log.info("cloud recording started", {
         roomId: this.room.id,
@@ -330,16 +354,34 @@ class CloudRecorder {
    */
   async onProducerAdded(peer, producer) {
     try {
-      if (!this.active) return;
-      const teacher = this.room.getTeacher();
-      if (!teacher || peer.id !== teacher.id) return;
-
+      if (!this.active || !peer) return;
       const source = producer.appData?.source;
       const track = this.tracks.get(source);
-      // Only sources that were part of this recording from the start have a
-      // port in the SDP; a screen share begun later has nowhere to go.
-      if (!track || track.consumer) return;
 
+      // A source that had a port reserved in the SDP goes back to that port.
+      // The owner has to match, or a student's microphone would be spliced into
+      // the slot the teacher's was recorded on.
+      const teacher = this.room.getTeacher();
+      const owner =
+        source === "screen"
+          ? peer.role === "teacher" || peer.role === "coordinator"
+          : Boolean(teacher) && peer.id === teacher.id;
+
+      if (track && !track.consumer && owner) {
+        await this._reattach(producer, source, track);
+        return;
+      }
+      // Anything else that is worth recording and has nowhere to go in the
+      // fixed capture gets a capture of its own. Voices are picked up when
+      // somebody unmutes, not here: a producer is created muted.
+      if (source === "screen") await this.addScreen(peer);
+    } catch (err) {
+      log.error("onProducerAdded failed — recording continues", err);
+    }
+  }
+
+  async _reattach(producer, source, track) {
+    try {
       const replacement = await this.room.router.createPlainTransport({
         listenInfo: { protocol: "udp", ip: "127.0.0.1" },
         rtcpMux: true,
@@ -391,6 +433,169 @@ class CloudRecorder {
   }
 
   /**
+   * Captures one stream that began after recording had already started.
+   *
+   * The main capture reads a single SDP that ffmpeg parses once, so no stream
+   * can be added to it later. Rather than restart the class recording, each
+   * latecomer gets a small ffmpeg of its own writing a plain copy of the RTP.
+   * Both are stamped from the same server clock, so the gap between the two
+   * start moments is all that compose needs to put it back in the right place.
+   */
+  async _startSide({ producer, peer, kind }) {
+    const index = this.sides.length;
+    const port = pickPort();
+    const transport = await this.room.router.createPlainTransport({
+      listenInfo: { protocol: "udp", ip: "127.0.0.1" },
+      rtcpMux: true,
+      comedia: false,
+    });
+    this.transports.push(transport);
+    await transport.connect({ ip: "127.0.0.1", port });
+
+    const consumer = await transport.consume({
+      producerId: producer.id,
+      rtpCapabilities: this.room.router.rtpCapabilities,
+      paused: true,
+    });
+    this.consumers.push(consumer);
+
+    const info = { ...codecInfo(consumer), remoteRtpPort: port };
+    const sdpPath = path.join(RECORDINGS_DIR, `${this.id}_side${index}.sdp`);
+    const outPath = path.join(RECORDINGS_DIR, `${this.id}_side${index}.mkv`);
+    fs.writeFileSync(
+      sdpPath,
+      buildSdp(kind === "audio" ? { audio: info } : { cam: info }),
+      "utf8",
+    );
+
+    const args = buildIngestArgs({ sdpPath, outputPath: outPath, hasAudio: kind === "audio" });
+    log.info("ffmpeg side", args.join(" "));
+    const startedAt = Date.now();
+    const proc = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
+    proc.stderr.on("data", (c) => {
+      const line = String(c).trim();
+      if (line) log.info(`ffmpeg side:${kind}`, line);
+    });
+    proc.on("error", (err) => log.error("ffmpeg side error", err));
+
+    await wait(INGEST_WARMUP_MS);
+    await consumer.resume();
+    if (kind === "video") {
+      try {
+        await consumer.requestKeyFrame();
+      } catch (err) {
+        log.warn("side requestKeyFrame failed (continuing)", err.message);
+      }
+    }
+
+    const side = {
+      kind,
+      path: outPath,
+      sdpPath,
+      proc,
+      consumer,
+      peerId: peer.id,
+      name: peer.name,
+      role: peer.role,
+      producerId: producer.id,
+      // Where this belongs in the finished file, measured from the moment the
+      // class recording itself began.
+      offsetMs: Math.max(0, startedAt - (this.mediaStartedAt || startedAt)),
+    };
+    this.sides.push(side);
+    log.info("side capture started", {
+      kind,
+      name: peer.name,
+      role: peer.role,
+      offsetMs: side.offsetMs,
+    });
+    return side;
+  }
+
+  /**
+   * Records a student or coordinator who is speaking.
+   *
+   * Only the teacher was ever recorded, so a class played back later had the
+   * teacher answering questions nobody could hear. The capture is left running
+   * once it starts: someone who mutes and unmutes again simply sends nothing in
+   * between, which is cheaper and safer than tearing it down and rebuilding it.
+   */
+  async addVoice(peer) {
+    try {
+      if (!this.active || !peer || peer.disconnected) return null;
+      const teacher = this.room.getTeacher();
+      if (teacher && peer.id === teacher.id) return null;
+      if (this.sides.some((s) => s.kind === "audio" && s.peerId === peer.id)) return null;
+      if (this.sides.length >= MAX_SIDES) {
+        log.warn("voice not recorded — too many side captures already", {
+          name: peer.name,
+          max: MAX_SIDES,
+        });
+        return null;
+      }
+      const producer = this.room.findProducer(peer.id, "audio");
+      if (!producer) return null;
+      return await this._startSide({ producer, peer, kind: "audio" });
+    } catch (err) {
+      log.error("addVoice failed — recording continues without that voice", err);
+      return null;
+    }
+  }
+
+  /**
+   * Records a screen share that began after the class was already recording,
+   * whoever is sharing. Only a share already running when record was pressed,
+   * and only the teacher's, used to make it into the file.
+   */
+  async addScreen(peer) {
+    try {
+      if (!this.active || !peer) return null;
+      // A share running at start already has a place in the main capture.
+      if (this.tracks.has("screen")) return null;
+      if (this.sides.some((s) => s.kind === "video")) return null;
+      if (this.sides.length >= MAX_SIDES) return null;
+      const producer = this.room.findProducer(peer.id, "screen");
+      if (!producer) return null;
+      return await this._startSide({ producer, peer, kind: "video" });
+    } catch (err) {
+      log.error("addScreen failed — recording continues without the share", err);
+      return null;
+    }
+  }
+
+  /** SIGINT so each side file gets a readable container, same as the ingest. */
+  async _stopSides() {
+    await Promise.all(
+      this.sides.map(
+        (side) =>
+          new Promise((resolve) => {
+            const proc = side.proc;
+            side.proc = null;
+            if (!proc || proc.killed) return resolve();
+            const timeout = setTimeout(() => {
+              try {
+                proc.kill("SIGKILL");
+              } catch {
+                /* already gone */
+              }
+              resolve();
+            }, 8000);
+            proc.once("exit", () => {
+              clearTimeout(timeout);
+              resolve();
+            });
+            try {
+              proc.kill("SIGINT");
+            } catch {
+              clearTimeout(timeout);
+              resolve();
+            }
+          }),
+      ),
+    );
+  }
+
+  /**
    * Strokes are appended whole and a clear empties the list, so the count plus
    * the last stroke's timestamp changes on every edit and on nothing else.
    */
@@ -434,9 +639,9 @@ class CloudRecorder {
   _writeBoardManifest() {
     if (!this.frames.length) return null;
     const endedAt = this.endedAt || Date.now();
-    // Board time zero is when ffmpeg began reading RTP, so the first frame
-    // covers the ingest warm-up rather than the board starting late.
-    const startAt = this.captureStartedAt || this.frames[0].at;
+    // Board time zero is the moment media began, so the first frame covers the
+    // gap before the first snapshot rather than the board starting late.
+    const startAt = this.mediaStartedAt || this.frames[0].at;
     const lines = ["ffconcat version 1.0"];
 
     for (let i = 0; i < this.frames.length; i += 1) {
@@ -551,29 +756,61 @@ class CloudRecorder {
 
     const boardVideo = await this._makeBoardVideo();
 
+    // A side capture that never received a packet is an empty container, and
+    // feeding one to the layout only breaks it.
+    const usable = this.sides.filter((s) => fileSize(s.path) >= 2000);
+    const voices = usable
+      .filter((s) => s.kind === "audio")
+      .map((s) => ({ path: s.path, offsetMs: s.offsetMs, name: s.name, role: s.role }));
+    const sideScreen = usable.find((s) => s.kind === "video") || null;
+    if (this.sides.length !== usable.length) {
+      log.warn("some side captures were empty and are being skipped", {
+        started: this.sides.length,
+        usable: usable.length,
+      });
+    }
+
     const resolved = resolveOutputPath(RECORDINGS_DIR, this.room.id, this.startedAt || Date.now());
     this.outputPath = resolved.fullPath;
     this.outputName = resolved.name;
 
     // Richest first; each step removes whatever is most likely to be at fault.
+    // The extra voices and a late screen share go first: they are the newest
+    // parts of the pipeline, and losing them still leaves the class intact.
+    const base = { boardVideo, camIndex, screenIndex, sideScreen, voices };
     const attempts = [
-      { label: "full", boardVideo, camIndex, screenIndex },
-      { label: "no-screen", boardVideo, camIndex, screenIndex: null },
-      { label: "no-board", boardVideo: null, camIndex, screenIndex },
-      { label: "no-camera", boardVideo, camIndex: null, screenIndex },
-      { label: "camera-only", boardVideo: null, camIndex, screenIndex: null },
-      { label: "audio-only", boardVideo: null, camIndex: null, screenIndex: null },
+      { label: "full", ...base },
+      { label: "no-voices", ...base, voices: [] },
+      { label: "no-side-screen", ...base, voices: [], sideScreen: null },
+      { label: "no-screen", ...base, voices: [], sideScreen: null, screenIndex: null },
+      { label: "no-board", ...base, voices: [], sideScreen: null, boardVideo: null },
+      { label: "no-camera", ...base, voices: [], sideScreen: null, camIndex: null },
+      { label: "camera-only", ...base, voices: [], sideScreen: null, boardVideo: null, screenIndex: null },
+      { label: "audio-only", ...base, voices: [], sideScreen: null, boardVideo: null, camIndex: null, screenIndex: null },
     ];
 
     const tried = new Set();
     for (const attempt of attempts) {
       // An arrangement with nothing left to show and no audio is not a file.
-      if (attempt.boardVideo == null && attempt.camIndex == null && attempt.screenIndex == null && !hasAudio) {
+      if (
+        attempt.boardVideo == null &&
+        attempt.camIndex == null &&
+        attempt.screenIndex == null &&
+        attempt.sideScreen == null &&
+        !hasAudio &&
+        !attempt.voices.length
+      ) {
         continue;
       }
       // Dropping an element that was never captured produces the same command
       // twice; running it again would only fail again.
-      const key = `${Boolean(attempt.boardVideo)}|${attempt.camIndex}|${attempt.screenIndex}`;
+      const key = [
+        Boolean(attempt.boardVideo),
+        attempt.camIndex,
+        attempt.screenIndex,
+        Boolean(attempt.sideScreen),
+        attempt.voices.length,
+      ].join("|");
       if (tried.has(key)) continue;
       tried.add(key);
       const res = await runFfmpeg(
@@ -583,6 +820,8 @@ class CloudRecorder {
           outputPath: this.outputPath,
           camIndex: attempt.camIndex,
           screenIndex: attempt.screenIndex,
+          sideScreen: attempt.sideScreen,
+          voices: attempt.voices,
           hasAudio,
         }),
         `compose:${attempt.label}`,
@@ -621,14 +860,14 @@ class CloudRecorder {
 
   writeSidecar(attempt, hasAudio) {
     try {
-      const layout =
-        attempt.screenIndex != null
-          ? attempt.boardVideo
-            ? "screen-main + board-inset"
-            : "screen-main"
-          : attempt.boardVideo
-            ? "whiteboard-main"
-            : "camera-main";
+      const shared = attempt.screenIndex != null || Boolean(attempt.sideScreen);
+      const layout = attempt.boardVideo
+        ? shared
+          ? "whiteboard + screen overlay"
+          : "whiteboard"
+        : shared
+          ? "screen"
+          : "camera";
       fs.writeFileSync(
         path.join(RECORDINGS_DIR, `${this.outputName.replace(/\.mp4$/, "")}.json`),
         JSON.stringify(
@@ -642,8 +881,11 @@ class CloudRecorder {
             attempt: attempt.label,
             hasAudio,
             hasCamera: attempt.camIndex != null,
-            hasScreen: attempt.screenIndex != null,
+            hasScreen: attempt.screenIndex != null || Boolean(attempt.sideScreen),
             hasWhiteboard: Boolean(attempt.boardVideo),
+            // Who can be heard besides the teacher, so a recording can be
+            // checked against the register without watching it.
+            voices: (attempt.voices || []).map((v) => ({ name: v.name, role: v.role })),
             boardFrames: this.frameIndex,
             whiteboard: this.room.whiteboard || [],
           },
@@ -692,7 +934,8 @@ class CloudRecorder {
       }
       // The ffmpeg log is deliberately kept: it is small, and it is the record
       // of how this recording was produced.
-      for (const p of [this.sdpPath, this.livePath, this.boardVideoPath]) {
+      const sideFiles = this.sides.flatMap((s) => [s.path, s.sdpPath]);
+      for (const p of [this.sdpPath, this.livePath, this.boardVideoPath, ...sideFiles]) {
         if (p && fs.existsSync(p)) fs.rmSync(p, { force: true });
       }
     } catch (err) {
@@ -717,7 +960,7 @@ class CloudRecorder {
       this.active = false;
       this.endedAt = Date.now();
 
-      await this._stopIngest();
+      await Promise.all([this._stopIngest(), this._stopSides()]);
 
       for (const consumer of this.consumers) {
         try {
@@ -796,8 +1039,8 @@ class CloudRecorder {
       outputPath: this.outputPath,
       startedAt: this.startedAt,
       endedAt: this.endedAt,
-      layout:
-        this.screenIndex != null ? "screen-main + camera-inset" : "whiteboard-main + camera-inset",
+      layout: this.layoutUsed || "whiteboard + camera inset",
+      voices: this.sides.filter((s) => s.kind === "audio").length,
     };
   }
 }
