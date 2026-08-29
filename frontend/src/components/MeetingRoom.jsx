@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useUser } from "../context/UserContext.jsx";
 import { emitAck } from "../services/socket.js";
 import { useMediasoup } from "../hooks/useMediasoup.js";
+import { useActiveSpeakers } from "../hooks/useActiveSpeakers.js";
 import { useWhiteboard } from "../hooks/useWhiteboard.js";
 import InstructorVideo from "./InstructorVideo.jsx";
 import Participants from "./Participants.jsx";
@@ -59,6 +60,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     setToast(text);
     setTimeout(() => setToast(""), 4000);
   }, []);
+
+  const speaking = useActiveSpeakers(socket);
 
   const media = useMediasoup({
     socket,
@@ -427,6 +430,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
             list={participants}
             canRemove={isStaff}
             selfId={selfId}
+            speaking={speaking}
             onRemove={onRemove}
             onLowerHand={onLowerHand}
           />

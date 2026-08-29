@@ -13,21 +13,71 @@ function initials(name) {
     .toUpperCase();
 }
 
+const RANK = { teacher: 0, coordinator: 1 };
+
 /**
- * Raised hands float to the top in the order they went up, so staff answer
- * whoever asked first. Everyone else keeps arrival order (Array.sort is stable).
+ * Orders the list so the people you need are where you expect them.
+ *
+ * Staff are pinned at the top, because who is running the class does not change
+ * with who happens to be talking. Below them come whoever is speaking, so a
+ * class of forty does not leave you hunting for the voice you can hear. Raised
+ * hands come next, still in the order they went up, so the queue is preserved.
+ * Everyone else keeps arrival order — Array.sort is stable, so equal ranks stay
+ * as they were.
+ *
+ * @param {Array} list
+ * @param {string[]} speaking peer ids, loudest first
  */
-export function sortByHand(list) {
+export function sortParticipants(list, speaking = []) {
+  const speakingRank = new Map(speaking.map((id, i) => [id, i]));
+
+  const groupOf = (p) => {
+    if (RANK[p.role] != null) return RANK[p.role];
+    if (speakingRank.has(p.id)) return 2;
+    if (p.handRaised) return 3;
+    return 4;
+  };
+
   return [...list].sort((a, b) => {
-    if (Boolean(a.handRaised) !== Boolean(b.handRaised)) return a.handRaised ? -1 : 1;
-    if (a.handRaised && b.handRaised) return (a.handRaisedAt || 0) - (b.handRaisedAt || 0);
+    const ga = groupOf(a);
+    const gb = groupOf(b);
+    if (ga !== gb) return ga - gb;
+    if (ga === 2) return speakingRank.get(a.id) - speakingRank.get(b.id);
+    if (ga === 3) return (a.handRaisedAt || 0) - (b.handRaisedAt || 0);
     return 0;
   });
 }
 
-export default function Participants({ list, canRemove, selfId, onRemove, onLowerHand }) {
-  const ordered = sortByHand(list);
+/** Three bars that rise and fall, so "talking" reads at a glance. */
+function SpeakingBars() {
+  return (
+    <span className="speak-bars" role="img" aria-label="speaking">
+      <i />
+      <i />
+      <i />
+    </span>
+  );
+}
+
+export default function Participants({
+  list,
+  canRemove,
+  selfId,
+  speaking = [],
+  onRemove,
+  onLowerHand,
+}) {
+  const speakingSet = new Set(speaking);
+  const ordered = sortParticipants(list, speaking);
   const raised = ordered.filter((p) => p.handRaised).length;
+
+  // The queue is by when the hand went up, independent of where the row sits.
+  const handOrder = new Map(
+    list
+      .filter((p) => p.handRaised)
+      .sort((a, b) => (a.handRaisedAt || 0) - (b.handRaisedAt || 0))
+      .map((p, i) => [p.id, i + 1]),
+  );
 
   return (
     <div className="plist">
@@ -41,12 +91,18 @@ export default function Participants({ list, canRemove, selfId, onRemove, onLowe
           </span>
         ) : null}
       </div>
-      {ordered.map((p, i) => (
-        <div className={`prow ${p.handRaised ? "hand" : ""}`} key={p.id}>
+      {ordered.map((p) => {
+        const isSpeaking = speakingSet.has(p.id) && !p.disconnected;
+        return (
+        <div
+          className={`prow ${p.handRaised ? "hand" : ""} ${isSpeaking ? "speaking" : ""}`}
+          key={p.id}
+        >
           <div className={`avatar ${p.role}`}>{initials(p.name)}</div>
           <div className="pinfo">
             <div className="pname">
               {p.name}
+              {isSpeaking ? <SpeakingBars /> : null}
               {p.id === selfId ? <span className="pself">you</span> : null}
               {ROLE_LABEL[p.role] ? (
                 <span className={`role-tag ${p.role}`}>{ROLE_LABEL[p.role]}</span>
@@ -55,6 +111,11 @@ export default function Participants({ list, canRemove, selfId, onRemove, onLowe
             <div className="pstatus">
               {p.disconnected ? (
                 "reconnecting…"
+              ) : isSpeaking ? (
+                <>
+                  <IconMic size={12} />
+                  speaking
+                </>
               ) : (
                 <>
                   {p.audioMuted ? <IconMicOff size={12} /> : <IconMic size={12} />}
@@ -76,7 +137,9 @@ export default function Participants({ list, canRemove, selfId, onRemove, onLowe
               onClick={() => (canRemove || p.id === selfId ? onLowerHand?.(p.id) : undefined)}
               disabled={!canRemove && p.id !== selfId}
             >
-              <span className="hand-order">{i + 1}</span>
+              {/* Position in the hand queue, which is not the row number:
+                  someone speaking is lifted above the queue. */}
+              <span className="hand-order">{handOrder.get(p.id)}</span>
               <IconHand size={15} />
             </button>
           ) : null}
@@ -93,7 +156,8 @@ export default function Participants({ list, canRemove, selfId, onRemove, onLowe
             </button>
           ) : null}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

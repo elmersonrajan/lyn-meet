@@ -6,6 +6,7 @@ const {
   getRoom,
   removePeerFromRoom,
   closeRoom,
+  onSpeaking,
   normalizeRole,
 } = require("../mediasoup/roomManager");
 const { createLogger } = require("../utils/logger");
@@ -125,6 +126,17 @@ function attachSocketHandlers(io) {
       io.to(status.meetingId).emit("recording-status", status);
     } catch (err) {
       log.error("recording status broadcast failed", err);
+    }
+  });
+
+  // Who is talking, several times a second. Deliberately not logged and not
+  // acknowledged: it is a hint for the participant list, and a dropped one is
+  // corrected by the next.
+  onSpeaking((roomId, speakers) => {
+    try {
+      io.to(roomId).emit("active-speakers", { speakers });
+    } catch (err) {
+      log.error("active-speakers broadcast failed", err);
     }
   });
 
