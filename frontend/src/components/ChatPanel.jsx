@@ -1,52 +1,34 @@
-import React, { useEffect, useRef, useState } from "react";
-import { emitAck } from "../services/socket";
+import React, { useEffect, useRef } from "react";
 import { PollCard, PollComposer } from "./Poll.jsx";
-import { IconChat, IconClose, IconPoll, IconSend } from "./Icons.jsx";
-
-function timeOf(at) {
-  try {
-    return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return "";
-  }
-}
+import { QuestionCard, QuestionComposer } from "./QandA.jsx";
+import { IconChat, IconClose, IconPoll } from "./Icons.jsx";
 
 export default function ChatPanel({
   open,
   tab,
   onTab,
   onClose,
-  messages,
+  questions,
   polls,
   myVotes,
   isStaff,
   onVoted,
+  onAnswered,
   onError,
 }) {
-  const [text, setText] = useState("");
   const listRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [open, tab, messages.length, polls.length]);
+  }, [open, tab, questions.length, polls.length]);
 
   if (!open) return null;
 
-  const send = async (e) => {
-    e.preventDefault();
-    if (!text.trim()) return;
-    try {
-      await emitAck("post-message", { text, type: "chat" });
-      setText("");
-    } catch (err) {
-      console.error("[Chat] send failed", err);
-      onError?.(err.message);
-    }
-  };
-
   const ordered = [...polls].sort((a, b) => b.createdAt - a.createdAt);
+  // Newest question first: it is the one being answered right now.
+  const orderedQuestions = [...questions].sort((a, b) => b.at - a.at);
 
   return (
     <aside className="chat-dock">
@@ -58,7 +40,7 @@ export default function ChatPanel({
             onClick={() => onTab("chat")}
           >
             <IconChat size={15} />
-            {isStaff ? "Announce" : "Messages"}
+            Q&amp;A
           </button>
           <button
             type="button"
@@ -76,20 +58,21 @@ export default function ChatPanel({
 
       <div className="chat-list" ref={listRef}>
         {tab === "chat" ? (
-          messages.length ? (
-            messages.map((m) => (
-              <div key={m.id} className="msg">
-                <div className="meta">
-                  <strong>{m.from}</strong>
-                  <span className={`role-tag ${m.role}`}>{m.role}</span>
-                  <span className="msg-time">{timeOf(m.at)}</span>
-                </div>
-                <div className="msg-body">{m.text}</div>
-              </div>
+          orderedQuestions.length ? (
+            orderedQuestions.map((q) => (
+              <QuestionCard
+                key={q.id}
+                question={q}
+                isStaff={isStaff}
+                onError={onError}
+                onAnswered={onAnswered}
+              />
             ))
           ) : (
             <p className="dock-empty">
-              No announcements yet. Only the teacher or coordinator can post here.
+              {isStaff
+                ? "Ask the class a question below. Their answers come back to you and the coordinator only."
+                : "No questions yet — the teacher will ask one."}
             </p>
           )
         ) : ordered.length ? (
@@ -113,25 +96,13 @@ export default function ChatPanel({
 
       {isStaff ? (
         tab === "chat" ? (
-          <form className="chat-form" onSubmit={send}>
-            <input
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="Message the class…"
-              maxLength={2000}
-            />
-            <button type="submit" aria-label="Send">
-              <IconSend size={16} />
-            </button>
-          </form>
+          <QuestionComposer onError={onError} onPosted={() => onTab("chat")} />
         ) : (
           <PollComposer onError={onError} onPosted={() => onTab("poll")} />
         )
-      ) : (
-        <p className="dock-readonly">
-          {tab === "chat" ? "View only — messages come from teaching staff." : "You can vote on polls."}
-        </p>
-      )}
+      ) : tab === "poll" ? (
+        <p className="dock-readonly">You can vote on polls.</p>
+      ) : null}
     </aside>
   );
 }

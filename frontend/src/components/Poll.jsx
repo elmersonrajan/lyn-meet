@@ -27,24 +27,32 @@ function clock(ms) {
 export function PollComposer({ onError, onPosted }) {
   const [question, setQuestion] = useState("");
   const [options, setOptions] = useState(EMPTY);
-  const [correctIndex, setCorrectIndex] = useState(0);
+  // Any number of options can be the answer, so this is a set, not an index.
+  const [correct, setCorrect] = useState([0]);
   const [minutes, setMinutes] = useState(2);
   const [busy, setBusy] = useState(false);
+
+  const toggleCorrect = (i) =>
+    setCorrect((prev) => (prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i].sort()));
 
   const submit = async (e) => {
     e.preventDefault();
     if (busy) return;
+    if (!correct.length) {
+      onError?.("Mark at least one correct option");
+      return;
+    }
     setBusy(true);
     try {
       await emitAck("create-poll", {
         question,
         options,
-        correctIndex,
+        correct,
         durationMs: minutes * 60 * 1000,
       });
       setQuestion("");
       setOptions(EMPTY);
-      setCorrectIndex(0);
+      setCorrect([0]);
       onPosted?.();
     } catch (err) {
       console.error("[Poll] create failed", err);
@@ -65,17 +73,22 @@ export function PollComposer({ onError, onPosted }) {
         maxLength={500}
       />
 
-      <label className="poll-label">Options — tick the correct one</label>
+      <label className="poll-label">
+        Options — tick every correct one
+        <span className="poll-hint">
+          {correct.length > 1 ? `${correct.length} correct answers` : "1 correct answer"}
+        </span>
+      </label>
       {options.map((opt, i) => (
-        <div key={i} className={`poll-opt-row ${correctIndex === i ? "correct" : ""}`}>
+        <div key={i} className={`poll-opt-row ${correct.includes(i) ? "correct" : ""}`}>
           <button
             type="button"
             className="poll-radio"
-            onClick={() => setCorrectIndex(i)}
-            title="Mark as the correct answer"
-            aria-pressed={correctIndex === i}
+            onClick={() => toggleCorrect(i)}
+            title="Mark as a correct answer"
+            aria-pressed={correct.includes(i)}
           >
-            {correctIndex === i ? <IconCheck size={14} /> : LETTERS[i]}
+            {correct.includes(i) ? <IconCheck size={14} /> : LETTERS[i]}
           </button>
           <input
             className="poll-input"
@@ -112,16 +125,27 @@ export function PollComposer({ onError, onPosted }) {
 export function PollCard({ poll, myVote, canVote, canEnd, onVoted, onError }) {
   const left = useCountdown(poll.endsAt, poll.closed);
   const [busy, setBusy] = useState(false);
-  const voted = myVote != null;
+  // What this person has ticked but not yet sent.
+  const [picked, setPicked] = useState([]);
+  const mine = Array.isArray(myVote) ? myVote : myVote != null ? [myVote] : null;
+  const voted = Boolean(mine);
   const expired = poll.closed || left <= 0;
   const maxCount = poll.closed ? Math.max(1, ...(poll.counts || [1])) : 1;
+  const correct = poll.correct || [];
 
-  const vote = async (index) => {
-    if (busy || voted || expired) return;
+  const toggle = (index) => {
+    if (busy || voted || expired || !canVote) return;
+    setPicked((prev) =>
+      prev.includes(index) ? prev.filter((x) => x !== index) : [...prev, index].sort(),
+    );
+  };
+
+  const submit = async () => {
+    if (busy || voted || expired || !picked.length) return;
     setBusy(true);
     try {
-      await emitAck("vote-poll", { pollId: poll.id, optionIndex: index });
-      onVoted?.(poll.id, index);
+      await emitAck("vote-poll", { pollId: poll.id, optionIndexes: picked });
+      onVoted?.(poll.id, picked);
     } catch (err) {
       console.error("[Poll] vote failed", err);
       onError?.(err.message);
@@ -165,18 +189,20 @@ export function PollCard({ poll, myVote, canVote, canEnd, onVoted, onError }) {
         {poll.options.map((opt, i) => {
           const count = poll.counts?.[i] ?? 0;
           const pct = poll.totalVotes ? Math.round((count / poll.totalVotes) * 100) : 0;
-          const isCorrect = poll.closed && poll.correctIndex === i;
-          const isMine = myVote === i;
+          const isCorrect = poll.closed && correct.includes(i);
+          const isMine = voted ? mine.includes(i) : picked.includes(i);
 
           return (
             <li key={i}>
               <button
                 type="button"
                 className={`poll-option ${isCorrect ? "correct" : ""} ${isMine ? "mine" : ""}`}
-                onClick={() => vote(i)}
+                onClick={() => toggle(i)}
                 disabled={!canVote || voted || expired || busy}
               >
-                <span className="poll-letter">{isCorrect ? <IconCheck size={14} /> : LETTERS[i]}</span>
+                <span className="poll-letter">
+                  {isCorrect || (isMine && !poll.closed) ? <IconCheck size={14} /> : LETTERS[i]}
+                </span>
                 <span className="poll-text">{opt}</span>
                 {poll.closed ? (
                   <span className="poll-count">
@@ -197,10 +223,28 @@ export function PollCard({ poll, myVote, canVote, canEnd, onVoted, onError }) {
 
       <footer className="poll-card-foot">
         <span className="poll-by">by {poll.from}</span>
-        {!poll.closed && voted ? <span className="poll-note">Vote recorded</span> : null}
-        {!poll.closed && !voted && canVote ? <span className="poll-note">Pick one answer</span> : null}
+        {poll.closed && poll.correctVotes != null ? (
+          <span className="poll-note">
+            {poll.correctVotes} of {poll.totalVotes} fully correct
+          </span>
+        ) : null}
+        {!poll.closed && voted ? <span className="poll-note">Answer recorded</span> : null}
+        {/* Never says how many are correct: that would give the answer away. */}
+        {!poll.closed && !voted && canVote ? (
+          <span className="poll-note">Tick every answer you think is right</span>
+        ) : null}
         {!poll.closed && !canVote ? (
           <span className="poll-note">{poll.totalVotes} voted so far</span>
+        ) : null}
+        {!poll.closed && !voted && canVote ? (
+          <button
+            type="button"
+            className="poll-submit"
+            onClick={submit}
+            disabled={busy || !picked.length}
+          >
+            {busy ? "Sending…" : `Submit${picked.length > 1 ? ` (${picked.length})` : ""}`}
+          </button>
         ) : null}
         {!poll.closed && canEnd ? (
           <button type="button" className="poll-end" onClick={end}>
