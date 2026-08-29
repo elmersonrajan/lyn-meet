@@ -21,7 +21,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   const { session, isTeacher, isCoordinator, isStaff, setSession } = useUser();
   const [participants, setParticipants] = useState(joinPayload.participants || []);
   const [stageMode, setStageMode] = useState(joinPayload.stageMode || "whiteboard");
-  const [messages, setMessages] = useState(joinPayload.chat || []);
+  const [questions, setQuestions] = useState(joinPayload.questions || []);
   const [polls, setPolls] = useState(joinPayload.polls || []);
   const [myVotes, setMyVotes] = useState(() => {
     const seed = {};
@@ -126,9 +126,26 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       if (peer.role === "teacher") setTeacherDisconnected(false);
     };
     const onStage = ({ mode }) => setStageMode(mode);
-    const onChat = (msg) => {
-      setMessages((prev) => [...prev, msg]);
+    const onQuestionAsked = (question) => {
+      setQuestions((prev) => [...prev.filter((q) => q.id !== question.id), question]);
       setUnreadChat((n) => n + 1);
+      show(isStaff ? "Question posted" : "New question from the teacher");
+    };
+    // Answers only ever reach staff, so this listener is silent for a student.
+    const onQuestionAnswer = (answer) => {
+      setQuestions((prev) =>
+        prev.map((q) => {
+          if (q.id !== answer.questionId) return q;
+          const others = (q.answers || []).filter((a) => a.peerId !== answer.peerId);
+          return { ...q, answers: [...others, answer] };
+        }),
+      );
+    };
+    const onQuestionCount = ({ questionId, answerCount }) => {
+      setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, answerCount } : q)));
+    };
+    const onQuestionClosed = ({ questionId }) => {
+      setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, closed: true } : q)));
     };
     const onPollStarted = (poll) => {
       setPolls((prev) => [...prev.filter((p) => p.id !== poll.id), poll]);
@@ -200,7 +217,10 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     socket.on("peer-joined", onJoined);
     socket.on("peer-left", onLeftPeer);
     socket.on("stage-mode", onStage);
-    socket.on("chat-message", onChat);
+    socket.on("question-asked", onQuestionAsked);
+    socket.on("question-answer", onQuestionAnswer);
+    socket.on("question-answer-count", onQuestionCount);
+    socket.on("question-closed", onQuestionClosed);
     socket.on("poll-started", onPollStarted);
     socket.on("poll-ended", onPollEnded);
     socket.on("poll-vote-count", onPollCount);
@@ -222,7 +242,10 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       socket.off("peer-joined", onJoined);
       socket.off("peer-left", onLeftPeer);
       socket.off("stage-mode", onStage);
-      socket.off("chat-message", onChat);
+      socket.off("question-asked", onQuestionAsked);
+      socket.off("question-answer", onQuestionAnswer);
+      socket.off("question-answer-count", onQuestionCount);
+      socket.off("question-closed", onQuestionClosed);
       socket.off("poll-started", onPollStarted);
       socket.off("poll-ended", onPollEnded);
       socket.off("poll-vote-count", onPollCount);
@@ -484,11 +507,16 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
           if (t === "chat") setUnreadChat(0);
         }}
         onClose={() => setChatOpen(false)}
-        messages={messages}
+        questions={questions}
         polls={polls}
         myVotes={myVotes}
         isStaff={isStaff}
-        onVoted={(pollId, index) => setMyVotes((prev) => ({ ...prev, [pollId]: index }))}
+        onVoted={(pollId, picks) => setMyVotes((prev) => ({ ...prev, [pollId]: picks }))}
+        onAnswered={(questionId, answer) =>
+          setQuestions((prev) =>
+            prev.map((q) => (q.id === questionId ? { ...q, myAnswer: answer } : q)),
+          )
+        }
         onError={showToast}
       />
       {toast ? <div className="toast">{toast}</div> : null}

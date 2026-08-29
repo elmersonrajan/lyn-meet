@@ -77,7 +77,9 @@ class Room {
     this.recorder = null;
     this.audioObserver = null;
     this.teacherLeaveTimer = null;
-    this.chat = [];
+    // Questions put to the class by staff. Each carries its own answers, which
+    // only staff are ever sent — see questionPublic in the socket layer.
+    this.questions = [];
     this.whiteboard = [];
     this.polls = [];
     this.stageMode = "whiteboard";

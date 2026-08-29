@@ -141,11 +141,19 @@ export default function Toolbar({
         {activePoll ? <span className="dot" /> : null}
       </button>
 
-      <button className="tbtn" onClick={onOpenChat} title="Announcements from teaching staff">
+      <button
+        className="tbtn"
+        onClick={onOpenChat}
+        title={
+          staff
+            ? "Ask the class a question — answers come back to staff only"
+            : "Questions from your teacher"
+        }
+      >
         <span className="ico">
           <IconChat />
         </span>
-        {staff ? "Announce" : "Messages"}
+        Q&amp;A
         {unreadChat ? <span className="badge">{unreadChat > 9 ? "9+" : unreadChat}</span> : null}
       </button>
 

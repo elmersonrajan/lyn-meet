@@ -50,15 +50,61 @@ function requireTeacher(peer) {
   }
 }
 
+function isStaff(peer) {
+  return Boolean(peer) && (peer.role === "teacher" || peer.role === "coordinator");
+}
+
 function requireStaff(peer) {
-  if (!peer || (peer.role !== "teacher" && peer.role !== "coordinator")) {
+  if (!isStaff(peer)) {
     throw new Error("Only the teacher or coordinator can perform this action");
   }
 }
 
+/**
+ * A second socket.io room holding only the teacher and coordinators.
+ *
+ * Answers to a question are marked for staff only, and the reliable way to keep
+ * them that way is never to put them on the wire to anyone else. Filtering a
+ * payload per recipient would work until the day someone adds a broadcast and
+ * forgets; sending to a room students are not in cannot leak by omission.
+ */
+function staffRoom(roomId) {
+  return `${roomId}::staff`;
+}
+
 const POLL_DURATION_MS = Number(process.env.POLL_DURATION_MS || 120000);
 
-/** Vote counts and the correct answer stay hidden until the poll closes. */
+/**
+ * What a question looks like to one person.
+ *
+ * Staff see every answer. A student sees the question, how many people have
+ * answered, and their own answer — never anybody else's, which is the whole
+ * point of asking this way rather than in the open.
+ */
+function questionPublic(question, peer) {
+  const view = {
+    id: question.id,
+    text: question.text,
+    from: question.from,
+    role: question.role,
+    at: question.at,
+    closed: question.closed,
+    answerCount: question.answers.size,
+  };
+  if (isStaff(peer)) {
+    view.answers = [...question.answers.values()];
+  } else if (peer && question.answers.has(peer.id)) {
+    view.myAnswer = question.answers.get(peer.id);
+  }
+  return view;
+}
+
+/** Two sets of option indexes holding the same members. Both arrive sorted. */
+function sameChoice(a, b) {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+/** Vote counts and the correct answers stay hidden until the poll closes. */
 function pollPublic(poll, peerId) {
   const view = {
     id: poll.id,
@@ -71,12 +117,21 @@ function pollPublic(poll, peerId) {
     totalVotes: poll.votes.size,
   };
   if (poll.closed) {
+    // One person can now pick several options, so the counts add up to more
+    // than the number of voters. totalVotes stays the count of people.
     const counts = poll.options.map(() => 0);
-    for (const idx of poll.votes.values()) {
-      if (counts[idx] != null) counts[idx] += 1;
+    for (const picks of poll.votes.values()) {
+      for (const idx of picks) {
+        if (counts[idx] != null) counts[idx] += 1;
+      }
     }
     view.counts = counts;
-    view.correctIndex = poll.correctIndex;
+    view.correct = poll.correct;
+    // Credit only for the whole set: picking one of two right answers, or the
+    // right one plus a wrong one, is not a correct answer to the question.
+    view.correctVotes = [...poll.votes.values()].filter((picks) =>
+      sameChoice(picks, poll.correct),
+    ).length;
   }
   if (peerId && poll.votes.has(peerId)) {
     view.myVote = poll.votes.get(peerId);
@@ -105,7 +160,7 @@ function joinAck(room, peer, extra = {}) {
     routerRtpCapabilities: room.router.rtpCapabilities,
     iceServers: getIceServers(),
     stageMode: room.stageMode,
-    chat: room.chat,
+    questions: room.questions.map((q) => questionPublic(q, peer)),
     polls: room.polls.map((p) => pollPublic(p, peer.id)),
     whiteboard: room.whiteboard,
     recording: room.recorder ? room.recorder.snapshot() : null,
@@ -184,6 +239,7 @@ function attachSocketHandlers(io) {
             socket.data.peerId = currentTeacher.id;
             socket.data.roomId = room.id;
             socket.join(room.id);
+            socket.join(staffRoom(room.id));
             socket.to(room.id).emit("peer-reconnected", currentTeacher.public());
             io.to(room.id).emit("participants", room.participants());
             meetingLog.writeEntry("teacher-reconnect", {
@@ -207,6 +263,8 @@ function attachSocketHandlers(io) {
         socket.data.peerId = peer.id;
         socket.data.roomId = room.id;
         socket.join(room.id);
+        // Answers to questions go here and nowhere else.
+        if (isStaff(peer)) socket.join(staffRoom(room.id));
 
         socket.to(room.id).emit("peer-joined", peer.public());
 
@@ -559,26 +617,105 @@ function attachSocketHandlers(io) {
       }
     });
 
-    socket.on("post-message", ({ text, type }, callback) => {
+    /** Staff put a question to the class. Everyone sees the question itself. */
+    socket.on("ask-question", ({ text }, callback) => {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
         if (!room || !peer) throw new Error("Not in a room");
         requireStaff(peer);
-        const message = {
+
+        const body = String(text || "").trim().slice(0, 2000);
+        if (!body) throw new Error("The question is empty");
+
+        const question = {
           id: uuid(),
-          text: String(text || "").slice(0, 2000),
-          type: type === "qa" ? "qa" : "chat",
+          text: body,
           from: peer.name,
           role: peer.role,
           at: Date.now(),
+          closed: false,
+          answers: new Map(),
         };
-        if (!message.text.trim()) throw new Error("Message is empty");
-        room.chat.push(message);
-        io.to(room.id).emit("chat-message", message);
-        ack(callback, { ok: true, message });
+        room.questions.push(question);
+        if (room.questions.length > 100) {
+          room.questions.splice(0, room.questions.length - 100);
+        }
+
+        log.action("question-asked", { roomId: room.id, questionId: question.id, by: peer.name });
+        io.to(room.id).emit("question-asked", questionPublic(question, null));
+        ack(callback, { ok: true, question: questionPublic(question, peer) });
       } catch (err) {
-        log.error("post-message failed", err);
+        log.error("ask-question failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    /**
+     * A student answers. The answer itself goes only to staff; the rest of the
+     * class is told how many have answered and nothing more, so nobody can copy
+     * and nobody is embarrassed by being wrong in front of the room.
+     */
+    socket.on("answer-question", ({ questionId, text }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        if (!room || !peer) throw new Error("Not in a room");
+
+        const question = room.questions.find((q) => q.id === questionId);
+        if (!question) throw new Error("Question not found");
+        if (question.closed) throw new Error("This question is closed");
+
+        const body = String(text || "").trim().slice(0, 2000);
+        if (!body) throw new Error("Your answer is empty");
+
+        // Replaced rather than appended: an answer can be reworded until the
+        // question closes, and staff should see one answer per student.
+        const answer = {
+          id: question.answers.get(peer.id)?.id || uuid(),
+          questionId: question.id,
+          peerId: peer.id,
+          name: peer.name,
+          role: peer.role,
+          text: body,
+          at: Date.now(),
+        };
+        question.answers.set(peer.id, answer);
+
+        log.action("question-answered", {
+          roomId: room.id,
+          questionId: question.id,
+          by: peer.name,
+        });
+        io.to(staffRoom(room.id)).emit("question-answer", answer);
+        io.to(room.id).emit("question-answer-count", {
+          questionId: question.id,
+          answerCount: question.answers.size,
+        });
+        ack(callback, { ok: true, answer });
+      } catch (err) {
+        log.error("answer-question failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    /** Stops further answers. The question and its answers stay readable. */
+    socket.on("close-question", ({ questionId }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        if (!room || !peer) throw new Error("Not in a room");
+        requireStaff(peer);
+
+        const question = room.questions.find((q) => q.id === questionId);
+        if (!question) throw new Error("Question not found");
+        question.closed = true;
+
+        log.action("question-closed", { roomId: room.id, questionId: question.id });
+        io.to(room.id).emit("question-closed", { questionId: question.id });
+        ack(callback, { ok: true });
+      } catch (err) {
+        log.error("close-question failed", err);
         ack(callback, { ok: false, error: err.message });
       }
     });
@@ -681,10 +818,16 @@ function attachSocketHandlers(io) {
           throw new Error("Provide all 4 options");
         }
 
-        const correctIndex = Number(payload?.correctIndex);
-        if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex > 3) {
-          throw new Error("Mark which option is correct");
-        }
+        // Any number of options can be correct — "select all that apply" is a
+        // question in its own right, not a poll with one answer.
+        const correct = [
+          ...new Set(
+            (Array.isArray(payload?.correct) ? payload.correct : [])
+              .map((i) => Number(i))
+              .filter((i) => Number.isInteger(i) && i >= 0 && i < options.length),
+          ),
+        ].sort((a, b) => a - b);
+        if (!correct.length) throw new Error("Mark at least one correct option");
 
         if (room.polls.some((p) => !p.closed)) {
           throw new Error("A poll is already running — wait for it to finish");
@@ -699,7 +842,7 @@ function attachSocketHandlers(io) {
           id: uuid(),
           question,
           options,
-          correctIndex,
+          correct,
           from: peer.name,
           createdAt: now,
           endsAt: now + durationMs,
@@ -720,7 +863,7 @@ function attachSocketHandlers(io) {
       }
     });
 
-    socket.on("vote-poll", ({ pollId, optionIndex }, callback) => {
+    socket.on("vote-poll", ({ pollId, optionIndexes }, callback) => {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
@@ -731,15 +874,21 @@ function attachSocketHandlers(io) {
         if (poll.closed || Date.now() >= poll.endsAt) throw new Error("This poll has closed");
         if (poll.votes.has(peer.id)) throw new Error("You already voted");
 
-        const idx = Number(optionIndex);
-        if (!Number.isInteger(idx) || idx < 0 || idx >= poll.options.length) {
-          throw new Error("Invalid option");
-        }
+        // A vote is a set of choices. How many are right is never revealed, so
+        // nobody can work the answer out from the number they are asked for.
+        const picks = [
+          ...new Set(
+            (Array.isArray(optionIndexes) ? optionIndexes : [optionIndexes])
+              .map((i) => Number(i))
+              .filter((i) => Number.isInteger(i) && i >= 0 && i < poll.options.length),
+          ),
+        ].sort((a, b) => a - b);
+        if (!picks.length) throw new Error("Choose at least one option");
 
-        poll.votes.set(peer.id, idx);
-        log.action("poll-vote", { roomId: room.id, pollId: poll.id, peerId: peer.id });
+        poll.votes.set(peer.id, picks);
+        log.action("poll-vote", { roomId: room.id, pollId: poll.id, peerId: peer.id, picks });
         io.to(room.id).emit("poll-vote-count", { pollId: poll.id, totalVotes: poll.votes.size });
-        ack(callback, { ok: true, optionIndex: idx });
+        ack(callback, { ok: true, optionIndexes: picks });
       } catch (err) {
         log.error("vote-poll failed", err);
         ack(callback, { ok: false, error: err.message });
@@ -847,6 +996,7 @@ async function handleDisconnect(io, socket, { voluntary }) {
     socket.to(room.id).emit("peer-left", peer.public());
     socket.to(room.id).emit("participants", room.participants());
     socket.leave(room.id);
+    socket.leave(staffRoom(room.id));
     socket.data.peerId = null;
     socket.data.roomId = null;
 
