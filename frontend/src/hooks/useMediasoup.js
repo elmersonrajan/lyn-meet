@@ -23,6 +23,9 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
   const teacherStreamRef = useRef(new MediaStream());
   const screenStreamRef = useRef(new MediaStream());
   const remoteAudioRef = useRef(new Map());
+  // producerId -> track, so a teacher track can be dropped when its producer
+  // goes rather than lingering in the stream.
+  const teacherTracksRef = useRef(new Map());
 
   useEffect(() => {
     peerIdRef.current = peerId;
@@ -34,6 +37,36 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
     );
   }, []);
 
+  const publishTeacherStream = useCallback(() => {
+    const tracks = teacherStreamRef.current.getTracks();
+    setTeacherStream(tracks.length ? new MediaStream(tracks) : null);
+  }, []);
+
+  /**
+   * Puts a teacher track into the stream, replacing whatever was there for that
+   * kind.
+   *
+   * A teacher who reconnects publishes a new camera, and the old track was
+   * simply added alongside the dead one. The browser kept rendering whichever
+   * it picked first, so the teacher came back to the meeting but their tile
+   * stayed frozen on a track that would never carry another frame.
+   */
+  const setTeacherTrack = useCallback(
+    (track, producerId) => {
+      for (const existing of teacherStreamRef.current.getTracks()) {
+        if (existing.kind !== track.kind) continue;
+        teacherStreamRef.current.removeTrack(existing);
+        for (const [id, t] of teacherTracksRef.current) {
+          if (t === existing) teacherTracksRef.current.delete(id);
+        }
+      }
+      teacherStreamRef.current.addTrack(track);
+      if (producerId) teacherTracksRef.current.set(producerId, track);
+      publishTeacherStream();
+    },
+    [publishTeacherStream],
+  );
+
   const attachRemoteTrack = useCallback(
     (track, source, producer) => {
       try {
@@ -44,14 +77,12 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
           return;
         }
         if (track.kind === "video") {
-          teacherStreamRef.current.addTrack(track);
-          setTeacherStream(new MediaStream(teacherStreamRef.current.getTracks()));
+          setTeacherTrack(track, producer?.producerId);
           return;
         }
         if (track.kind === "audio") {
           if (producer?.role === "teacher") {
-            teacherStreamRef.current.addTrack(track);
-            setTeacherStream(new MediaStream(teacherStreamRef.current.getTracks()));
+            setTeacherTrack(track, producer?.producerId);
             return;
           }
           const stream = new MediaStream([track]);
@@ -62,7 +93,7 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
         console.error("[Mediasoup] attachRemoteTrack failed", err);
       }
     },
-    [publishRemoteAudio],
+    [publishRemoteAudio, setTeacherTrack],
   );
 
   const consumeProducer = useCallback(
@@ -225,6 +256,12 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
         setScreenStream(null);
         setSharing(false);
       }
+      const teacherTrack = teacherTracksRef.current.get(producerId);
+      if (teacherTrack) {
+        teacherTracksRef.current.delete(producerId);
+        teacherStreamRef.current.removeTrack(teacherTrack);
+        publishTeacherStream();
+      }
       if (remoteAudioRef.current.has(producerId)) {
         remoteAudioRef.current.delete(producerId);
         publishRemoteAudio();
@@ -277,7 +314,7 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
       socket.off("joined-muted", onJoinedMuted);
       socket.off("force-mute");
     };
-  }, [socket, enabled, consumeProducer, localStream, role, publishRemoteAudio]);
+  }, [socket, enabled, consumeProducer, localStream, role, publishRemoteAudio, publishTeacherStream]);
 
   const consumeExisting = useCallback(
     async (producers = []) => {

@@ -154,12 +154,35 @@ class Room {
       const transport = peer.transports.get(transportId);
       if (!transport) throw new Error("Transport not found");
 
+      // A teacher who reconnects publishes a fresh camera and mic while the old
+      // producers are still held open by the grace period. Leaving both in place
+      // meant findProducer kept returning the dead one, so the recorder and any
+      // late joiner subscribed to a track that would never send another packet.
+      const stale = this.findProducer(peer.id, source);
+      if (stale) {
+        log.info("replacing an existing producer", { peerId: peer.id, source, staleId: stale.id });
+        try {
+          stale.close();
+        } catch (err) {
+          log.error("close stale producer failed", err);
+        }
+        peer.producers.delete(stale.id);
+      }
+
       const producer = await transport.produce({
         kind,
         rtpParameters,
-        appData: { source, peerId: peer.id, role: peer.role },
+        appData: { source, peerId: peer.id, role: peer.role, replaces: stale?.id || null },
       });
       peer.producers.set(producer.id, producer);
+
+      // An active recording is bound to the producer it started with, so it
+      // needs telling that this source now lives somewhere else.
+      if (this.recorder && this.recorder.active) {
+        this.recorder.onProducerAdded(peer, producer).catch((err) => {
+          log.error("recorder re-attach failed", err);
+        });
+      }
 
       if (source === "video") peer.videoOff = false;
       if (source === "audio") peer.audioMuted = false;
@@ -280,13 +303,33 @@ class Room {
     }
   }
 
+  /**
+   * Ends the capture and returns straight away. Laying the file out is a
+   * separate step so the teacher is not left waiting on ffmpeg.
+   */
   async stopRecording() {
     try {
       if (!this.recorder) return null;
-      const snap = await this.recorder.stop();
-      return snap;
+      return await this.recorder.stopCapture();
     } catch (err) {
       log.error("stopRecording failed", err);
+      throw err;
+    }
+  }
+
+  /**
+   * Produces the final file. Safe to call repeatedly; joins the run in progress.
+   *
+   * Takes the recorder rather than reading this.recorder, because a new
+   * recording started while the previous one was being saved would otherwise
+   * see the fresh recorder finalised out from under it.
+   */
+  async finalizeRecording(recorder = this.recorder) {
+    try {
+      if (!recorder) return null;
+      return await recorder.finalize();
+    } catch (err) {
+      log.error("finalizeRecording failed", err);
       throw err;
     }
   }
@@ -389,8 +432,11 @@ async function closeRoom(room) {
       if (poll.timer) clearTimeout(poll.timer);
       poll.timer = null;
     }
-    if (room.recorder && room.recorder.active) {
+    // Stop the capture before the router goes, but let the layout finish on its
+    // own: closing a session must not sit waiting on ffmpeg.
+    if (room.recorder) {
       await room.stopRecording();
+      room.finalizeRecording().catch((err) => log.error("finalize after close failed", err));
     }
     // Anyone still in the room when it closes needs their session ended, or
     // they would read as permanently present. A peer already marked

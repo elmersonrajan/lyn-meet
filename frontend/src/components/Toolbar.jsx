@@ -22,6 +22,8 @@ export default function Toolbar({
   camOn,
   micOn,
   recording,
+  recSaving,
+  recBusy,
   micLocked,
   unreadChat,
   activePoll,
@@ -106,12 +108,19 @@ export default function Toolbar({
           </button>
 
           <button
-            className={`tbtn ${recording ? "live" : ""}`}
+            className={`tbtn ${recording ? "live" : ""} ${recSaving ? "busy" : ""}`}
             onClick={onToggleRecord}
-            title={recording ? "Stop cloud recording" : "Start cloud recording"}
+            disabled={recBusy || recSaving}
+            title={
+              recSaving
+                ? "The class is being saved on the server — this can take a few minutes"
+                : recording
+                  ? "Stop cloud recording"
+                  : "Start cloud recording"
+            }
           >
             <span className="ico">{recording ? <IconStopRecord /> : <IconRecord />}</span>
-            {recording ? "Stop Rec" : "Record"}
+            {recSaving ? "Saving…" : recording ? "Stop Rec" : "Record"}
           </button>
 
         </>
