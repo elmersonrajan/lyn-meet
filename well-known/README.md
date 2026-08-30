@@ -32,7 +32,7 @@ placeholder string invalidates the statement.
 Not here yet, because it needs the 10-character Team ID from the Apple
 Developer account and a knowingly-invalid file is no better than a missing one.
 The template is in the app repo at `deploy/apple-app-site-association` — fill in
-`TEAMID.com.lyn.lynmeet`, drop it in this directory, and it is served with no
+`TEAMID.com.el.lynmeet`, drop it in this directory, and it is served with no
 further change. It must have **no** `.json` extension; that is the name Apple
 looks for.
 
@@ -53,7 +53,7 @@ curl "https://digitalassetlinks.googleapis.com/v1/statements:list?source.web.sit
 On a device with the app installed:
 
 ```bash
-adb shell pm get-app-links com.lyn.lynmeet
+adb shell pm get-app-links com.el.lynmeet
 ```
 
 `verified` is what you want. `legacy_failure` or `1024` means the fetch failed —
