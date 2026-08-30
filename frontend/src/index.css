@@ -486,11 +486,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   object-fit: cover;
   background: #123;
   display: block;
-  /* Mirrored for everyone, teacher and class alike. Presentation only: what is
-     published, and what the server records, is untouched by this. The cost is
-     that writing held up to the camera reads backwards live. */
-  transform: scaleX(-1);
 }
+/* Only ever on your own camera. Presentation only: what is sent to the class,
+   and what the server records, is untouched by this. */
+.instructor video.mirrored { transform: scaleX(-1); }
 .instructor .empty {
   position: absolute;
   inset: 0;
