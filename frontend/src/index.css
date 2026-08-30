@@ -1161,17 +1161,171 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .att-actions .att-dl:hover { background: var(--tint); }
 .att-actions .att-close { width: 32px; padding: 0; justify-content: center; color: var(--muted); }
 
-.att-select {
+.att-live-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   height: 32px;
-  max-width: 240px;
   border: 1px solid var(--border);
   border-radius: 9px;
   background: #fff;
-  color: var(--navy);
+  color: var(--muted);
   font-size: 12.5px;
   font-weight: 600;
-  padding: 0 6px;
+  padding: 0 11px;
   cursor: pointer;
+}
+.att-live-btn.on { border-color: var(--ok); color: #14663a; background: #eefaf2; }
+.att-live-btn:not(.on) .att-dot { background: #c3ccd9; }
+
+/* ---------- Attendance calendar ---------- */
+
+/* The calendar beside the register rather than above it: a coordinator moves
+   between days repeatedly, so the days must stay on screen while a day's
+   register is being read. */
+.att-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 268px minmax(0, 1fr);
+}
+.att-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+.att-cal {
+  border-right: 1px solid #e6ecf5;
+  background: #fbfcfe;
+  padding: 12px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.att-cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.att-cal-head strong { font-size: 13.5px; color: var(--navy); }
+.att-cal-head button {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--navy);
+  cursor: pointer;
+}
+.att-cal-head button:disabled { opacity: 0.3; cursor: default; }
+
+.att-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.att-cal-dow {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  padding-bottom: 4px;
+}
+.att-cal-pad { aspect-ratio: 1; }
+
+.att-cal-day {
+  position: relative;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  color: #b8c3d2;
+  cursor: default;
+  padding: 0;
+}
+/* A day a class was actually held. Everything else stays visible but inert, so
+   the grid still reads as a month while the days that matter stand out. */
+.att-cal-day.has {
+  background: #fff;
+  border-color: #bcd3f0;
+  color: var(--navy);
+  cursor: pointer;
+}
+.att-cal-day.has:hover { background: var(--tint-strong); }
+.att-cal-day.sel {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+}
+.att-cal-day.today:not(.sel) { box-shadow: inset 0 0 0 1px var(--warn); }
+/* Only when a day held more than one class, so the usual day stays uncluttered. */
+.att-cal-n {
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  font-size: 8.5px;
+  font-weight: 700;
+  color: var(--ok);
+}
+.att-cal-day.sel .att-cal-n { color: #9fe3bd; }
+
+.att-cal-hint,
+.att-cal-none {
+  margin: 12px 2px 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.att-cal-day-list { margin-top: 12px; }
+.att-cal-day-head {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.att-cal-day-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.att-cal-day-list button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  padding: 7px 9px;
+  cursor: pointer;
+  text-align: left;
+}
+.att-cal-day-list button:hover { border-color: var(--navy); background: var(--tint); }
+/* Which of the day's classes is on screen, so the list and the register agree. */
+.att-cal-day-list button.sel {
+  border-color: var(--navy);
+  background: var(--tint-strong);
+  box-shadow: inset 2px 0 0 var(--navy);
+}
+.att-cal-mid {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--navy);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.att-cal-time { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.att-cal-people {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  flex-shrink: 0;
 }
 
 /* Report header: meeting identity travels with the data, not just the title. */
@@ -1310,7 +1464,15 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   .att-modal { max-height: 88vh; }
   .att-head { flex-wrap: wrap; }
   .att-actions { flex-wrap: wrap; }
-  .att-select { max-width: 100%; flex: 1 1 100%; order: -1; }
+  /* Stacked: the calendar first, then the register for whichever day is open.
+     Capped so a phone still shows some of the register without scrolling past
+     a full month grid to reach it. */
+  .att-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); overflow: auto; }
+  .att-cal {
+    border-right: 0;
+    border-bottom: 1px solid #e6ecf5;
+    max-height: 46vh;
+  }
   .att-meta { grid-template-columns: 1fr; }
   .att-table td, .att-table th { padding: 8px 8px; font-size: 12px; }
   .att-foot { font-size: 11px; }

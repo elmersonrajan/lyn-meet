@@ -185,6 +185,18 @@ export const IconUsers = (p) => (
   </Svg>
 );
 
+export const IconChevronLeft = (p) => (
+  <Svg {...p}>
+    <path d="M14.5 5.5 8 12l6.5 6.5" />
+  </Svg>
+);
+
+export const IconChevronRight = (p) => (
+  <Svg {...p}>
+    <path d="M9.5 5.5 16 12l-6.5 6.5" />
+  </Svg>
+);
+
 export const IconLink = (p) => (
   <Svg {...p}>
     <path d="M10 13.5a3.5 3.5 0 0 0 5 0l3-3a3.54 3.54 0 0 0-5-5l-1.5 1.5" />
