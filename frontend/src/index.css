@@ -83,12 +83,19 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .lobby-brand > * { position: relative; z-index: 1; }
 
 .brand-top { display: flex; align-items: center; gap: 16px; }
+/* The mark is artwork on its own white ground rather than a cut-out, so it sits
+   on a white tile — the way an app icon does — instead of showing as a pale
+   rectangle floating on the navy. This also holds if the artwork is ever
+   replaced with a transparent version. */
 .brand-mark {
-  width: 72px;
-  height: 72px;
+  width: 76px;
+  height: 76px;
   object-fit: contain;
   flex-shrink: 0;
-  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.35));
+  background: #fff;
+  border-radius: 18px;
+  padding: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
 }
 .brand-words h1 {
   margin: 0;
@@ -232,7 +239,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
     gap: 14px;
     padding: 22px 24px;
   }
-  .brand-mark { width: 52px; height: 52px; }
+  .brand-mark { width: 56px; height: 56px; border-radius: 14px; padding: 6px; }
   .brand-words h1 { font-size: 21px; }
   .brand-tagline { display: none; }
 }
@@ -1521,7 +1528,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 @media (max-width: 640px) {
   .lobby { padding: 12px; }
   .lobby-card { padding: 22px 18px 20px; }
-  .role-row.three { grid-template-columns: 1fr; }
+  /* The three roles stay side by side. Stacking them made sense when they were
+     separate buttons, but as one segmented control a vertical stack reads as
+     three unrelated choices -- and the labels fit across a 360px screen. */
+  .role-btn { padding: 10px 2px; font-size: 11.5px; }
   .room { padding: 4px; gap: 4px; }
   .room-frame { border-width: 1px; border-radius: 8px; }
   .stage-wrap { min-height: 40vh; }
