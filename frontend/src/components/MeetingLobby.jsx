@@ -73,12 +73,12 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
       <div className="lobby-shell">
         <aside className="lobby-brand">
           <div className="brand-top">
-            {/* Dropped in at public/lyn_logo_cross.png. If it is not there yet
+            {/* Dropped in at public/lyn-logo-cross.png. If it is not there yet
                 the mark is left out rather than showing a broken image. */}
             {logoOk ? (
               <img
                 className="brand-mark"
-                src="/lyn_logo_cross.png"
+                src="/lyn-logo-cross.png"
                 alt="LYN"
                 onError={() => setLogoOk(false)}
               />
