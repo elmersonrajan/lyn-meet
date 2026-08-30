@@ -487,6 +487,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   background: #123;
   display: block;
 }
+/* Only ever on your own camera. Presentation only: what is sent to the class,
+   and what the server records, is untouched by this. */
+.instructor video.mirrored { transform: scaleX(-1); }
 .instructor .empty {
   position: absolute;
   inset: 0;
