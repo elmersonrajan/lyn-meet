@@ -3,7 +3,7 @@
     "relation": ["delegate_permission/common.handle_all_urls"],
     "target": {
       "namespace": "android_app",
-      "package_name": "com.lyn.lynmeet",
+      "package_name": "com.el.lynmeet",
       "sha256_cert_fingerprints": [
         "F8:A5:65:89:84:46:06:A0:CD:53:FA:4B:D4:FA:95:DC:8B:D7:A5:2B:82:73:52:25:F8:BF:FD:3A:AA:2F:04:3B"
       ]
