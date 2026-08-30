@@ -448,10 +448,6 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
             name={teacherName}
             disconnected={teacherDisconnected}
             muted={isTeacher}
-            // Only when this is the teacher's own camera. The same tile shows
-            // the teacher to everyone else, and flipping it for them would put
-            // any writing held up to the camera backwards.
-            mirror={isTeacher}
           />
           <Participants
             list={participants}
