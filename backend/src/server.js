@@ -6,7 +6,13 @@ const path = require("path");
 const http = require("http");
 const express = require("express");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
 const { Server } = require("socket.io");
+const { validateAtBoot, config: authConfig } = require("./auth/config");
+const { createAuthRouter } = require("./auth/routes");
+const { attach: attachUser, requireStaff } = require("./auth/middleware");
+const socketAuth = require("./auth/socketAuth");
+const db = require("./db/pool");
 const { startWorkers } = require("./mediasoup/workerManager");
 const { attachSocketHandlers } = require("./socket");
 const { startIdleReaper } = require("./rooms/idleReaper");
@@ -39,6 +45,10 @@ async function main() {
   try {
     log.action("boot", { port: PORT, cors: CORS_ORIGIN });
 
+    // A bad or missing signing key is a wide-open door, so it fails the deploy
+    // rather than the first student who tries to join.
+    validateAtBoot();
+
     await startWorkers();
 
     const app = express();
@@ -49,6 +59,10 @@ async function main() {
       }),
     );
     app.use(express.json());
+    app.use(cookieParser());
+    // Populates req.user when a valid session cookie is present. Silent: the
+    // gates below decide what to do about its absence.
+    app.use(attachUser);
     app.use((req, res, next) => {
       try {
         log.info("http", req.method, req.url);
@@ -60,7 +74,11 @@ async function main() {
 
     const ffmpeg = ffmpegAvailable();
 
-    app.get("/api/logs", (_req, res) => {
+    // The SSO bridge. Mounted before everything else so a signed-out visitor
+    // can always reach /auth/login without tripping a gate.
+    app.use("/auth", createAuthRouter());
+
+    app.get("/api/logs", requireStaff, (_req, res) => {
       try {
         const fs = require("fs");
         if (!fs.existsSync(LOG_PATH)) {
@@ -74,13 +92,27 @@ async function main() {
       }
     });
 
-    app.get("/health", (_req, res) => {
+    // Public on purpose: uptime monitoring must work without a session. It
+    // reports no user data, but it does report whether the user directory is
+    // reachable -- a class cannot start if nobody can be authenticated.
+    app.get("/health", async (_req, res) => {
       try {
+        let directoryOk = null;
+        if (!authConfig.authDisabled) {
+          try {
+            directoryOk = await db.ping();
+          } catch (err) {
+            directoryOk = false;
+            log.error("/health: user directory unreachable", err.message);
+          }
+        }
         res.json({
           ok: true,
           service: "lyn-meet-backend",
           rooms: rooms.size,
           uptime: process.uptime(),
+          auth: authConfig.authDisabled ? "DISABLED" : "sso",
+          directoryOk,
         });
       } catch (err) {
         log.error("/health failed", err);
@@ -88,7 +120,7 @@ async function main() {
       }
     });
 
-    app.get("/api/webrtc", (_req, res) => {
+    app.get("/api/webrtc", requireStaff, (_req, res) => {
       try {
         const { getIceServers } = require("./config/ice");
         const ms = require("./config/mediasoup");
@@ -112,7 +144,7 @@ async function main() {
       }
     });
 
-    app.get("/api/debug", (_req, res) => {
+    app.get("/api/debug", requireStaff, (_req, res) => {
       try {
         const snapshot = [];
         for (const room of rooms.values()) {
@@ -131,7 +163,7 @@ async function main() {
       }
     });
 
-    app.get("/api/attendance", (_req, res) => {
+    app.get("/api/attendance", requireStaff, (_req, res) => {
       try {
         res.json({ ok: true, meetings: attendance.listMeetings() });
       } catch (err) {
@@ -141,7 +173,7 @@ async function main() {
     });
 
     // ?date=DD-MM-YYYY selects one day; omitted, the most recent day is used.
-    app.get("/api/attendance/:meetingId", (req, res) => {
+    app.get("/api/attendance/:meetingId", requireStaff, (req, res) => {
       try {
         const report = attendance.buildReport(req.params.meetingId, { date: req.query.date });
         res.json({ ok: true, report });
@@ -153,7 +185,7 @@ async function main() {
 
     // Human-readable rendering of the raw event log. Opens in a browser as
     // plain text; ?date=DD-MM-YYYY narrows it to one day.
-    app.get("/api/attendance/:meetingId/log", (req, res) => {
+    app.get("/api/attendance/:meetingId/log", requireStaff, (req, res) => {
       try {
         const text = attendance.toText(req.params.meetingId, { date: req.query.date });
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -164,7 +196,7 @@ async function main() {
       }
     });
 
-    app.get("/api/attendance/:meetingId/csv", (req, res) => {
+    app.get("/api/attendance/:meetingId/csv", requireStaff, (req, res) => {
       try {
         const report = attendance.buildReport(req.params.meetingId, { date: req.query.date });
         const day = String(report.meetingDate || "").replace(/-/g, "");
@@ -201,10 +233,12 @@ async function main() {
       }),
     );
 
-    app.use("/recordings", express.static(RECORDINGS_DIR));
+    // Finished class recordings are student data, not public files.
+    app.use("/recordings", requireStaff, express.static(RECORDINGS_DIR));
 
     app.post(
       "/api/recordings/chunk",
+      requireStaff,
       express.raw({ type: "*/*", limit: "80mb" }),
       async (req, res) => {
         try {
@@ -253,6 +287,7 @@ async function main() {
 
     app.post(
       "/api/recordings/upload",
+      requireStaff,
       express.raw({ type: "*/*", limit: "400mb" }),
       async (req, res) => {
         try {
@@ -294,7 +329,7 @@ async function main() {
      * pressed stop and closed the tab can come back later and see whether their
      * class finished building. `?meetingId=` narrows it to one class.
      */
-    app.get("/api/recordings/status", (req, res) => {
+    app.get("/api/recordings/status", requireStaff, (req, res) => {
       try {
         const renderQueue = require("./recording/renderQueue");
         const meetingId = req.query.meetingId ? String(req.query.meetingId) : null;
@@ -308,7 +343,7 @@ async function main() {
       }
     });
 
-    app.get("/api/recordings", (req, res) => {
+    app.get("/api/recordings", requireStaff, (req, res) => {
       try {
         const fs = require("fs");
         if (!fs.existsSync(RECORDINGS_DIR)) {
@@ -344,6 +379,11 @@ async function main() {
       pingInterval: 10000,
       maxHttpBufferSize: 20 * 1024 * 1024,
     });
+
+    // Installed BEFORE the handlers: an unauthenticated socket must never
+    // reach `join-room`. This is the real gate -- the REST endpoints above are
+    // not how anyone gets into a meeting.
+    socketAuth.install(io);
 
     attachSocketHandlers(io);
     startIdleReaper(io);

@@ -36,11 +36,16 @@ function normalizeRole(role) {
 }
 
 class Peer {
-  constructor({ id, socketId, name, role }) {
+  constructor({ id, socketId, name, role, email = null }) {
     this.id = id;
     this.socketId = socketId;
     this.name = name;
     this.role = normalizeRole(role);
+    // The authenticated account behind this peer, from the platform directory.
+    // Deliberately kept off public(): the roster is broadcast to every student
+    // in the room, and nobody needs their classmates' addresses to see a
+    // video tile. It is here so attendance can be attributed to a real person.
+    this.email = email;
     this.transports = new Map();
     this.producers = new Map();
     this.consumers = new Map();

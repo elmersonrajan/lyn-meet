@@ -14,6 +14,10 @@ export function getSocket() {
       reconnection: true,
       reconnectionAttempts: 12,
       reconnectionDelay: 800,
+      // The session cookie is httpOnly, so the handshake is the only way the
+      // server learns who this is. Without this the polling fallback drops the
+      // cookie and every connection is refused as signed-out.
+      withCredentials: true,
     });
     socket.on("connect", () => console.log("[Socket] connected", socket.id));
     socket.on("disconnect", (reason) => console.warn("[Socket] disconnected", reason));

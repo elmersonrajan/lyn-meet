@@ -202,20 +202,43 @@ function attachSocketHandlers(io) {
 
     socket.on("join-room", async (payload, callback) => {
       try {
-        const typedName = String(payload?.name || "").trim();
+        // Identity comes from the handshake, never from this payload.
+        //
+        // The lobby used to send its own name and role, which meant anyone who
+        // could open a socket could arrive as a teacher and take control of a
+        // class. The socket middleware has already proved who this is against
+        // the platform directory, so `payload.name` and `payload.role` are now
+        // ignored outright rather than sanitised.
+        const auth = socket.data.auth;
+        if (!auth) throw new Error("Not signed in");
+
+        const role = normalizeRole(auth.role);
         // Upper case is the rule, and this is where it is enforced: the room is
         // keyed by this string, so "neet26" and "NEET26" were two rooms, and
         // anyone who typed it in lower case sat alone in an empty meeting. The
         // browser upper-cases the field too, but a stale link or a direct call
         // has to land in the same place.
         const meetingId = String(payload?.meetingId || "").trim().toUpperCase();
-        const role = normalizeRole(payload?.role);
-        log.action("join-room", { typedName, meetingId, role, socketId: socket.id });
+        log.action("join-room", {
+          email: auth.email,
+          meetingId,
+          role,
+          socketId: socket.id,
+        });
 
-        if (!typedName || !meetingId) {
-          throw new Error("Name and meeting ID are required");
+        if (!meetingId) {
+          throw new Error("A meeting ID is required");
         }
-        const name = displayNameFor(role, typedName);
+        if (payload?.role && normalizeRole(payload.role) !== role) {
+          // Not fatal -- the claim is simply discarded -- but worth a line in
+          // the log, because a mismatch is either a stale client or a probe.
+          log.warn("client-supplied role ignored", {
+            email: auth.email,
+            claimed: payload.role,
+            actual: role,
+          });
+        }
+        const name = displayNameFor(role, auth.name);
 
         const room = await getOrCreateRoom(meetingId);
 
@@ -225,6 +248,19 @@ function attachSocketHandlers(io) {
             throw new Error("This meeting already has an active teacher");
           }
           if (currentTeacher && currentTeacher.disconnected) {
+            // Reconnect is for the same account only. Without this check any
+            // teacher in the organisation could step into a colleague's peer
+            // during the grace window and inherit their class -- and the
+            // attendance record would still carry the first teacher's name.
+            // A genuine handover waits for the grace timer to expire.
+            if (currentTeacher.email && currentTeacher.email !== auth.email) {
+              log.warn("refused reconnect into another teacher's peer", {
+                meetingId,
+                existing: currentTeacher.email,
+                attempted: auth.email,
+              });
+              throw new Error("Another teacher is reconnecting to this meeting");
+            }
             log.info("teacher reconnecting into existing peer", {
               peerId: currentTeacher.id,
               meetingId,
@@ -258,6 +294,7 @@ function attachSocketHandlers(io) {
           socketId: socket.id,
           name,
           role,
+          email: auth.email,
         });
         room.peers.set(peer.id, peer);
         socket.data.peerId = peer.id;

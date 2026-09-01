@@ -1763,3 +1763,52 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   .instructor { max-height: 36vh; min-height: 90px; }
   .plist { max-height: none; }
 }
+/* Signed-in identity block in the lobby.
+   Replaces the old name and role inputs: the person can see who the server
+   thinks they are, and their only lever is to sign out again. */
+.signed-in-as {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.15rem 0.75rem;
+  align-items: baseline;
+  margin: 0 0 1.1rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.signed-in-name {
+  font-weight: 600;
+}
+
+.signed-in-role {
+  grid-row: 1;
+  grid-column: 2;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.15);
+  color: #1d4ed8;
+}
+
+.signed-in-email {
+  grid-column: 1;
+  font-size: 0.85rem;
+  opacity: 0.7;
+  overflow-wrap: anywhere;
+}
+
+.link-btn {
+  grid-column: 2;
+  justify-self: end;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 0.85rem;
+  color: #2563eb;
+  cursor: pointer;
+  text-decoration: underline;
+}

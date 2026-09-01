@@ -47,6 +47,7 @@ function recordJoin(meetingId, peer, reason = "join") {
   return recordEvent(meetingId, {
     type: "join",
     peerId: peer.id,
+    email: peer.email || null,
     name: peer.name,
     role: peer.role,
     reason,
@@ -57,6 +58,7 @@ function recordLeave(meetingId, peer, reason = "left") {
   return recordEvent(meetingId, {
     type: "leave",
     peerId: peer.id,
+    email: peer.email || null,
     name: peer.name,
     role: peer.role,
     reason,
@@ -148,7 +150,16 @@ function listMeetings() {
 function foldSessions(events) {
   const byPerson = new Map();
 
-  const keyOf = (e) => `${String(e.name || "").trim().toLowerCase()}::${e.role}`;
+  // Since sign-in became compulsory, events carry the authenticated account,
+  // which is a far better identity than a typed name: two students called
+  // "Priya S" no longer collapse into one row, and a rename mid-term no longer
+  // splits one person into two. Logs written before then have no email, so the
+  // old name+role key is kept for them -- reports over historical meetings must
+  // not change shape retroactively.
+  const keyOf = (e) =>
+    e.email
+      ? `email::${String(e.email).trim().toLowerCase()}`
+      : `${String(e.name || "").trim().toLowerCase()}::${e.role}`;
 
   for (let i = 0; i < events.length; i += 1) {
     const e = events[i];
@@ -156,6 +167,7 @@ function foldSessions(events) {
     if (!byPerson.has(key)) {
       byPerson.set(key, {
         name: String(e.name || "").trim() || "(unnamed)",
+        email: e.email ? String(e.email).trim().toLowerCase() : null,
         role: e.role || "student",
         sessions: [],
       });
