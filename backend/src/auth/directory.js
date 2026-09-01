@@ -19,20 +19,23 @@ const log = createLogger("Directory");
 /**
  * Platform UserType -> meeting role.
  *
- * Only 'T' drives a class. The four office types get coordinator, which is
- * this app's staff role (monitor, close the session, export attendance).
- * Everything else -- students, centres, mentors, evaluators, IT candidates --
- * joins as a student. Unknown or newly added codes fall through to student
- * rather than being denied: they are members of the organisation, and the
- * safe failure is fewer powers, not a locked door.
+ * The mapping is the organisation's, not ours: A/Q/O coordinate, S/M/C are
+ * students, T teaches. Management (M) sits in the student row deliberately --
+ * they attend classes, they do not run them, and coordinator carries real
+ * powers here (mute anyone, close the session, export the register).
+ *
+ * Unknown or newly added codes fall through to student rather than being
+ * denied: they are members of the organisation, and the safe failure is fewer
+ * powers, not a locked door.
  */
 const ROLE_BY_USERTYPE = {
   T: "teacher",
   A: "coordinator", // Administrator
-  O: "coordinator", // Online Admins
   Q: "coordinator", // Academic Coordinators
-  M: "coordinator", // Management
-  S: "student",
+  O: "coordinator", // Online Admins
+  S: "student", // Student
+  M: "student", // Management
+  C: "student", // Centre
 };
 
 function roleFor(userType) {

@@ -166,11 +166,16 @@ From `UserType` in `v_Users` (see `backend/src/auth/directory.js`):
 |---|---|---|
 | `T` | Teacher | `teacher` |
 | `A` | Administrator | `coordinator` |
-| `O` | Online Admins | `coordinator` |
 | `Q` | Academic Coordinators | `coordinator` |
-| `M` | Management | `coordinator` |
+| `O` | Online Admins | `coordinator` |
 | `S` | Student | `student` |
-| `C` `E` `V` `I` `U` `G` | Centre, Mentors, eValuation, IT, Consultant, General | `student` |
+| `M` | Management | `student` |
+| `C` | Centre | `student` |
+| `E` `V` `I` `U` `G` | Mentors, eValuation, IT Candidates, Consultant, General | `student` |
+
+Management attends classes rather than running them, so `M` is a student here
+even though it is a senior role on the platform -- `coordinator` carries real
+powers in a meeting (mute anyone, close the session, export the register).
 
 Unknown codes fall through to `student` — members of the organisation get in
 with the fewest powers rather than being locked out by a code nobody mapped.

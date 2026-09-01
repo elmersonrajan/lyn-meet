@@ -176,12 +176,16 @@ test("safeNext refuses off-site redirect targets", () => {
   assert.strictEqual(safeNext(""), "/");
 });
 
-test("role mapping: only T teaches, office types coordinate, rest are students", () => {
+test("role mapping follows the organisation's own chart: A/Q/O coordinate, S/M/C attend, T teaches", () => {
   assert.strictEqual(roleFor("T"), "teacher");
-  for (const code of ["A", "O", "Q", "M"]) assert.strictEqual(roleFor(code), "coordinator");
-  assert.strictEqual(roleFor("S"), "student");
+  for (const code of ["A", "Q", "O"]) assert.strictEqual(roleFor(code), "coordinator");
+  for (const code of ["S", "M", "C"]) assert.strictEqual(roleFor(code), "student");
   // Unmapped and unknown codes must not accidentally grant power.
-  for (const code of ["C", "E", "V", "I", "U", "G", "Z", "", null]) {
+  for (const code of ["E", "V", "I", "U", "G", "Z", "", null]) {
     assert.strictEqual(roleFor(code), "student");
   }
+  // Lower case and stray whitespace must not slip past the map into a
+  // silent student default -- these arrive from a database column.
+  assert.strictEqual(roleFor(" t "), "teacher");
+  assert.strictEqual(roleFor("a"), "coordinator");
 });
