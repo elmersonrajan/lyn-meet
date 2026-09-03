@@ -13,6 +13,20 @@
   --tint-strong: #e3ecfa;
   --border: #cfdbee;
   --warn: #e08600;
+
+  /* Reactions. Deeper and slightly desaturated against the flat primaries
+     elsewhere: an emerald rather than a signal green, a garnet rather than a
+     fire-engine red. Both hold their own next to the navy without shouting,
+     and both keep 4.5:1 contrast on their own tint. */
+  --react-up: #0d7a55;
+  --react-up-soft: #e8f4ef;
+  --react-up-line: #a8d8c4;
+  --react-up-ink: #0a5b3f;
+  --react-down: #a52834;
+  --react-down-soft: #fbecee;
+  --react-down-line: #ecbcc2;
+  --react-down-ink: #7c1d26;
+
   font-family: "Segoe UI", "IBM Plex Sans", system-ui, sans-serif;
 }
 
@@ -1816,9 +1830,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 /* ---------------------------------------------------------------------------
    Thumbs up / thumbs down
 
-   Green carries "following along" and amber carries "not following", matching
-   the raised-hand amber already used for "needs the teacher". Red is left for
-   destructive things -- a stuck student is not an error.
+   Students only. Emerald reads as "with you", garnet as "lost" -- deliberately
+   deeper than the --ok / --danger pair used for system state, so a stuck
+   student never looks like a failed operation.
    --------------------------------------------------------------------------- */
 
 .react-count {
@@ -1826,25 +1840,33 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   align-items: center;
   gap: 4px;
   border-radius: 999px;
-  padding: 1px 8px;
+  padding: 2px 9px;
   font-size: 11px;
   font-weight: 700;
+  letter-spacing: 0.01em;
   color: #fff;
   flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 /* The hand count already claims the free space; these sit beside it. */
 .hand-count + .react-count { margin-left: 6px; }
-.react-count.up { background: var(--ok, #15803d); }
-.react-count.down { background: var(--warn); }
 .react-count:first-of-type { margin-left: auto; }
 .react-count + .react-count { margin-left: 6px; }
+.react-count.up {
+  background: var(--react-up);
+  box-shadow: 0 1px 2px rgba(13, 122, 85, 0.35);
+}
+.react-count.down {
+  background: var(--react-down);
+  box-shadow: 0 1px 2px rgba(165, 40, 52, 0.35);
+}
 
 /* A row where someone said they are lost, sorted to the top of the list. */
 .prow.stuck {
-  background: #fff8ec;
-  box-shadow: inset 3px 0 0 var(--warn);
+  background: var(--react-down-soft);
+  box-shadow: inset 3px 0 0 var(--react-down);
 }
-.prow.stuck:hover { background: #fef3de; }
+.prow.stuck:hover { background: #f8e2e5; }
 
 .react-tag {
   display: inline-grid;
@@ -1854,20 +1876,37 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   border-radius: 50%;
   flex-shrink: 0;
 }
-.react-tag.up { background: #e6f5ec; color: var(--ok, #15803d); }
-.react-tag.down { background: #fdf0d9; color: #8a5200; }
+.react-tag.up {
+  background: var(--react-up-soft);
+  color: var(--react-up);
+  box-shadow: inset 0 0 0 1px var(--react-up-line);
+}
+.react-tag.down {
+  background: var(--react-down-soft);
+  color: var(--react-down);
+  box-shadow: inset 0 0 0 1px var(--react-down-line);
+}
 
-/* Toolbar buttons. The pressed state is the strong one: a student needs to
-   see that their own press registered, from across a phone screen. */
+/* Toolbar. The pressed state is the strong one: a student needs to see their
+   own press registered from across a phone screen. */
 .tbtn.react.up.on {
-  border-color: var(--ok, #15803d);
-  background: #e6f5ec;
-  color: #14532d;
+  border-color: var(--react-up-line);
+  background: var(--react-up-soft);
+  color: var(--react-up-ink);
+  box-shadow: 0 0 0 3px rgba(13, 122, 85, 0.12);
 }
 .tbtn.react.down.on {
-  border-color: var(--warn);
-  background: #fff8ec;
-  color: #8a5200;
+  border-color: var(--react-down-line);
+  background: var(--react-down-soft);
+  color: var(--react-down-ink);
+  box-shadow: 0 0 0 3px rgba(165, 40, 52, 0.12);
 }
-.tbtn .badge.up { background: var(--ok, #15803d); }
-.tbtn .badge.down { background: var(--warn); }
+.tbtn.react:hover:not(.on) { border-color: var(--border); }
+.tbtn .badge.up {
+  background: var(--react-up);
+  box-shadow: 0 0 0 2px var(--panel);
+}
+.tbtn .badge.down {
+  background: var(--react-down);
+  box-shadow: 0 0 0 2px var(--panel);
+}

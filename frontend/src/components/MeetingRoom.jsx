@@ -179,7 +179,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       // good news that can wait for the count, and forty of them in a row
       // would bury everything else.
       if (payload.peerId === session.peer?.id) return;
-      if (isStaff && payload.reaction === "down") show(`👎 ${payload.name} is not following`);
+      if (isStaff && payload.reaction === "down") show(`${payload.name} is not following`);
     };
     const onReactionsCleared = ({ by, cleared }) => {
       if (cleared) show(`${by} cleared all reactions (${cleared})`);
