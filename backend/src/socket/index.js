@@ -855,6 +855,70 @@ function attachSocketHandlers(io) {
       }
     });
 
+    /**
+     * Thumbs up / thumbs down.
+     *
+     * Deliberately one reaction per person rather than a tally of clicks: the
+     * question a teacher is asking is "how many of you are following this",
+     * and that only has a meaningful answer if each student counts once.
+     * Pressing the same thumb again clears it, so there is no way to be stuck
+     * showing a reaction you no longer mean.
+     */
+    socket.on("set-reaction", ({ reaction }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        if (!room || !peer) throw new Error("Not in a room");
+
+        const wanted = reaction === "up" || reaction === "down" ? reaction : null;
+        // A second press of the thumb you are already showing takes it back.
+        const next = peer.reaction === wanted ? null : wanted;
+
+        peer.reaction = next;
+        peer.reactionAt = next ? Date.now() : null;
+        log.action("set-reaction", { roomId: room.id, peerId: peer.id, reaction: next });
+
+        io.to(room.id).emit("reaction-changed", {
+          peerId: peer.id,
+          name: peer.name,
+          role: peer.role,
+          reaction: next,
+          at: peer.reactionAt,
+        });
+        io.to(room.id).emit("participants", room.participants());
+        ack(callback, { ok: true, reaction: next });
+      } catch (err) {
+        log.error("set-reaction failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    /** Staff only: wipe the board so the next question starts from nothing. */
+    socket.on("clear-reactions", (_payload, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        if (!room || !peer) throw new Error("Not in a room");
+        requireStaff(peer);
+
+        let cleared = 0;
+        for (const other of room.peers.values()) {
+          if (other.reaction) {
+            other.reaction = null;
+            other.reactionAt = null;
+            cleared += 1;
+          }
+        }
+        log.action("clear-reactions", { roomId: room.id, by: peer.id, cleared });
+        io.to(room.id).emit("reactions-cleared", { by: peer.name, cleared });
+        io.to(room.id).emit("participants", room.participants());
+        ack(callback, { ok: true, cleared });
+      } catch (err) {
+        log.error("clear-reactions failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
     socket.on("create-poll", (payload, callback) => {
       try {
         const room = getRoom(socket.data.roomId);
@@ -1030,9 +1094,12 @@ async function handleDisconnect(io, socket, { voluntary }) {
     // new session, so the gap is visible rather than billed as attendance.
     attendance.recordLeave(room.id, peer, voluntary ? "left" : "disconnected");
     // A teacher inside the grace window keeps their Peer, so a raised hand
-    // would otherwise stay up while they are not even connected.
+    // would otherwise stay up while they are not even connected. The same
+    // goes for a thumb: it means "right now", and they are not here.
     peer.handRaised = false;
     peer.handRaisedAt = null;
+    peer.reaction = null;
+    peer.reactionAt = null;
     const result = removePeerFromRoom(room, peer, { force });
 
     if (peer.role === "teacher" && result.keptAlive && !voluntary) {
