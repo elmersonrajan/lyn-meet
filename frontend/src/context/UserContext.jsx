@@ -5,6 +5,10 @@ const UserContext = createContext(null);
 export function UserProvider({ children }) {
   const [session, setSession] = useState({
     name: "",
+    // The authenticated account, filled in from /auth/me. The browser cannot
+    // set this to anything the server will believe -- it is here for display
+    // and for the attendance panel, not as a credential.
+    email: "",
     meetingId: "",
     role: "student",
     peer: null,

@@ -97,7 +97,22 @@ npm run dev
 
 Open `https://59.96.57.40:5173/` → Advanced → Proceed. Teacher first, then student.
 
+Set `AUTH_DISABLED=1` in `backend/.env` for local work: without it the lobby
+redirects to lynindia.in to sign in, and there is no way past it on a laptop.
+The flag is ignored when `NODE_ENV=production`.
+
 Debug: `http://59.96.57.40:5000/api/debug` and `/api/webrtc` and `/health`
+(the first two are staff-only now; `/health` stays public for monitoring)
+
+## Sign-in
+
+There is no login form and no Google sign-in. Everyone arrives from
+lynindia.in with a one-time signed ticket, and their email must exist in the
+platform's `v_Users` view or they are refused. Roles come from that view, not
+from the browser — the old lobby let anyone pick "Teacher" from a dropdown.
+
+See [docs/SSO.md](docs/SSO.md) for the flow, the endpoint lynindia.in has to
+expose, and what stops each class of attack.
 
 ## Router (office Zyxel → 192.168.1.55)
 

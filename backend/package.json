@@ -2,21 +2,25 @@
   "name": "lyn-meet-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "LYN MEET SFU backend — Express + Socket.IO + mediasoup + cloud recording",
+  "description": "LYN MEET SFU backend \u2014 Express + Socket.IO + mediasoup + cloud recording",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "check:recording": "node scripts/check-recording.js"
+    "check:recording": "node scripts/check-recording.js",
+    "test": "node --test test/auth.test.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.3",
     "mediasoup": "^3.15.5",
+    "mysql2": "^3.24.2",
     "socket.io": "^4.8.1"
   }
 }
