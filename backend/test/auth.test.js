@@ -226,3 +226,32 @@ test("hand-off rejects an absent or implausible token before touching the databa
     (err) => err.reason === "malformed",
   );
 });
+
+test("a token arriving with junk stuck to it is trimmed back to the real token", async () => {
+  // The platform's anchor tag is missing a closing quote, so the browser
+  // delivers `<token> target=` as the parameter value. Verified against the
+  // live table: the raw form matches no row, the trimmed form matches one.
+  const real = "ya29." + "a".repeat(64) + "._~+/-" + "b".repeat(64);
+
+  // No database here, so reaching the lookup is the proof that the shape
+  // checks passed -- a HandoffError would mean it was rejected before that.
+  const reached = async (input) => {
+    try {
+      await handoff.redeem(input);
+      return true;
+    } catch (err) {
+      if (err instanceof handoff.HandoffError) return false;
+      return true; // got as far as the query, which is what we are asserting
+    }
+  };
+
+  assert.ok(await reached(`${real} target=`), "trailing ' target=' must be trimmed, not rejected");
+  assert.ok(await reached(`${real}"`), "a stray quote must be trimmed");
+  assert.ok(await reached(`${real}&foo=1`), "a swallowed parameter must be trimmed");
+  assert.ok(await reached(`  ${real}  `), "surrounding whitespace must be trimmed");
+
+  // Trimming must never rescue something that is not a token to begin with.
+  await assert.rejects(handoff.redeem(" target="), (e) => e.reason === "malformed");
+  await assert.rejects(handoff.redeem("!!!!"), (e) => e.reason === "malformed");
+  await assert.rejects(handoff.redeem("short target="), (e) => e.reason === "malformed");
+});
