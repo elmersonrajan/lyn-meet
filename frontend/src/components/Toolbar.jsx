@@ -49,6 +49,7 @@ export default function Toolbar({
   onLeave,
 }) {
   const staff = isTeacher || isCoordinator;
+  const reactionCount = thumbsUp + thumbsDown;
 
   return (
     <div className="toolbar">
@@ -143,19 +144,28 @@ export default function Toolbar({
       </>
       ) : null}
 
-      {staff && thumbsUp + thumbsDown > 0 ? (
+      {/* Always present for staff, not only once someone has reacted. A
+          control that appears and disappears is a control nobody can find when
+          they need it, and "where is the clear button" is asked precisely when
+          the room is quiet. Disabled carries "nothing to clear" instead. */}
+      {staff ? (
         <button
-          className="tbtn attn"
+          className={`tbtn ${reactionCount > 0 ? "attn" : ""}`}
           onClick={onClearReactions}
-          title={`Clear all ${thumbsUp + thumbsDown} reaction(s)`}
+          disabled={reactionCount === 0}
+          title={
+            reactionCount > 0
+              ? `Clear all ${reactionCount} reaction(s)`
+              : "No reactions to clear"
+          }
         >
           <span className="ico">
             <IconTrash />
           </span>
           Clear Reactions
-          <span className="badge">
-            {thumbsUp + thumbsDown > 9 ? "9+" : thumbsUp + thumbsDown}
-          </span>
+          {reactionCount > 0 ? (
+            <span className="badge">{reactionCount > 9 ? "9+" : reactionCount}</span>
+          ) : null}
         </button>
       ) : null}
 
