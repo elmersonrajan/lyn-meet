@@ -45,9 +45,42 @@ class HandoffError extends Error {
 const MIN_TOKEN_LENGTH = 20;
 const MAX_TOKEN_LENGTH = 1000;
 
+/**
+ * The characters a token can actually contain: base64url plus the separators
+ * Google uses in `ya29.` values.
+ */
+const TOKEN_CHARS = /[^A-Za-z0-9._~+/-]/;
+
+/**
+ * Trims a token to its first invalid character.
+ *
+ * A malformed link on the platform side arrives as
+ * `...&TockenID=ya29.<token> target=` -- a missing closing quote in the anchor
+ * tag swallows the `target` attribute into the href, so the browser hands us
+ * the token with ` target=` stuck on the end and the lookup misses a row that
+ * is sitting right there.
+ *
+ * Cutting at the character class rather than matching that exact suffix means
+ * a `rel=`, a stray quote, or a fixed-then-differently-broken template all
+ * behave the same way. This only ever *shortens* the input and the lookup
+ * stays an exact match, so a partial token still authenticates nobody --
+ * prefix matching here would be a real hole and is deliberately not done.
+ */
 function clean(raw) {
-  const token = String(raw || "").trim();
-  if (!token) throw new HandoffError("missing", "No sign-in token supplied");
+  const value = String(raw || "").trim();
+  if (!value) throw new HandoffError("missing", "No sign-in token supplied");
+
+  const token = value.split(TOKEN_CHARS)[0];
+  if (token.length !== value.length) {
+    // Logged rather than silently accepted: the link that produced this is
+    // broken at the source, and papering over it without a trace means nobody
+    // ever fixes the template.
+    log.warn("trimmed junk from a sign-in token — the link template is malformed", {
+      received: value.length,
+      kept: token.length,
+    });
+  }
+
   if (token.length < MIN_TOKEN_LENGTH || token.length > MAX_TOKEN_LENGTH) {
     throw new HandoffError("malformed", "This sign-in link is not valid");
   }
