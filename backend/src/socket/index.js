@@ -858,9 +858,13 @@ function attachSocketHandlers(io) {
     /**
      * Thumbs up / thumbs down.
      *
+     * Students only. The reaction answers "is the class following me", so a
+     * teacher or coordinator in the count would be answering their own
+     * question and skewing it. The buttons are hidden for staff in the UI, but
+     * that is presentation -- this is the rule.
+     *
      * Deliberately one reaction per person rather than a tally of clicks: the
-     * question a teacher is asking is "how many of you are following this",
-     * and that only has a meaningful answer if each student counts once.
+     * question only has a meaningful answer if each student counts once.
      * Pressing the same thumb again clears it, so there is no way to be stuck
      * showing a reaction you no longer mean.
      */
@@ -869,6 +873,7 @@ function attachSocketHandlers(io) {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
         if (!room || !peer) throw new Error("Not in a room");
+        if (isStaff(peer)) throw new Error("Only students can react");
 
         const wanted = reaction === "up" || reaction === "down" ? reaction : null;
         // A second press of the thumb you are already showing takes it back.

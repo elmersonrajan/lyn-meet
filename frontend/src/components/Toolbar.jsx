@@ -105,10 +105,14 @@ export default function Toolbar({
         </button>
       ) : null}
 
-      {/* Counts sit on the buttons themselves rather than in a separate strip:
-          the number a student cares about is "did mine register", and the
-          number a teacher cares about is the running total. Both are the same
-          number, so it belongs in one place. */}
+      {/* Students only. The reaction answers "is the class following me", so
+          staff pressing it would be answering their own question. They see the
+          counts in the participants panel and on Clear Reactions instead.
+
+          Counts sit on the buttons rather than in a separate strip: a student
+          wants to know their press registered, and that is the same number. */}
+      {!staff ? (
+      <>
       <button
         className={`tbtn react up ${myReaction === "up" ? "on" : ""}`}
         onClick={() => onReact("up")}
@@ -136,6 +140,8 @@ export default function Toolbar({
           <span className="badge down">{thumbsDown > 99 ? "99+" : thumbsDown}</span>
         ) : null}
       </button>
+      </>
+      ) : null}
 
       {staff && thumbsUp + thumbsDown > 0 ? (
         <button
