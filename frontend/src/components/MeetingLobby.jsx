@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useUser } from "../context/UserContext.jsx";
 import { getSocket, emitAck } from "../services/socket.js";
 import { readMeetingIdFromUrl } from "../services/meetingLink.js";
@@ -25,6 +25,9 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // True while going straight into a class from a link, so the form is never
+  // rendered for the people who never needed it.
+  const [autoJoining, setAutoJoining] = useState(false);
   const [logoOk, setLogoOk] = useState(true);
 
   /**
@@ -68,8 +71,7 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
     };
   }, [setSession]);
 
-  const join = async (e) => {
-    e.preventDefault();
+  const enterMeeting = useCallback(async (id) => {
     try {
       setError("");
       setBusy(true);
@@ -106,11 +108,11 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
       await waitConnect();
 
       // Only the meeting is sent. Name and role are the server's to decide.
-      const res = await emitAck("join-room", { meetingId });
+      const res = await emitAck("join-room", { meetingId: id });
       setSession({
         name: res.peer?.name || me.name,
         email: me.email,
-        meetingId,
+        meetingId: id,
         role: res.peer?.role || me.role,
         peer: res.peer,
         joined: true,
@@ -120,17 +122,52 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
     } catch (err) {
       console.error("[Lobby] join failed", err);
       setError(err.message || "Failed to join meeting");
+      // Dropping back to the form is the point: the server's reason -- not
+      // enrolled, no such class, cancelled -- has to be readable, and staff
+      // may want to try a different class number.
+      setAutoJoining(false);
     } finally {
       setBusy(false);
     }
+  }, [me, onJoinPayload, onJoined, setSession]);
+
+  const join = (e) => {
+    e.preventDefault();
+    enterMeeting(meetingId);
   };
 
-  if (checking) {
+  /**
+   * Arriving from lynindia.in goes straight into the class.
+   *
+   * The link already carries both facts a join needs -- who you are, and which
+   * lesson -- so stopping to show a form with your own name in it and one
+   * button is a step that asks nothing. Someone who opens the site without a
+   * class in the link still gets the form, because there is nothing to join.
+   *
+   * The ref guards against React running effects twice in development, which
+   * would otherwise fire two joins for one arrival.
+   */
+  const autoTried = useRef(false);
+  useEffect(() => {
+    if (!me || !invited || !meetingId || autoTried.current) return;
+    autoTried.current = true;
+    setAutoJoining(true);
+    enterMeeting(meetingId);
+  }, [me, invited, meetingId, enterMeeting]);
+
+  if (checking || (autoJoining && !error)) {
     return (
       <div className="lobby">
         <div className="lobby-shell">
           <div className="lobby-card">
-            <h2 className="lobby-heading">Checking your sign-in…</h2>
+            <h2 className="lobby-heading">
+              {checking ? "Checking your sign-in…" : "Joining your class…"}
+            </h2>
+            {me && autoJoining ? (
+              <p className="lead">
+                {me.name} · {ROLE_LABELS[me.role] || "Student"}
+              </p>
+            ) : null}
           </div>
         </div>
       </div>
