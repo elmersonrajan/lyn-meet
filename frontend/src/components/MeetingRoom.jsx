@@ -49,6 +49,9 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   const selfId = session.peer?.id;
   const handRaised = participants.some((p) => p.id === selfId && p.handRaised);
   const raisedCount = participants.filter((p) => p.handRaised).length;
+  const myReaction = participants.find((p) => p.id === selfId)?.reaction ?? null;
+  const thumbsUp = participants.filter((p) => p.reaction === "up").length;
+  const thumbsDown = participants.filter((p) => p.reaction === "down").length;
 
   const staffPresent = participants.some(
     (p) => (p.role === "teacher" || p.role === "coordinator") && !p.disconnected,
@@ -171,6 +174,16 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     const onHandsCleared = ({ by, cleared }) => {
       if (cleared) show(`${by} lowered all hands (${cleared})`);
     };
+    const onReactionChanged = (payload) => {
+      // Only a thumbs down is worth interrupting staff for. A thumbs up is
+      // good news that can wait for the count, and forty of them in a row
+      // would bury everything else.
+      if (payload.peerId === session.peer?.id) return;
+      if (isStaff && payload.reaction === "down") show(`👎 ${payload.name} is not following`);
+    };
+    const onReactionsCleared = ({ by, cleared }) => {
+      if (cleared) show(`${by} cleared all reactions (${cleared})`);
+    };
     const onRecStart = () => {
       setRecording(true);
       show("Cloud recording started");
@@ -228,6 +241,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     socket.on("joined-muted", onJoinedMuted);
     socket.on("hand-changed", onHandChanged);
     socket.on("hands-cleared", onHandsCleared);
+    socket.on("reaction-changed", onReactionChanged);
+    socket.on("reactions-cleared", onReactionsCleared);
     socket.on("recording-started", onRecStart);
     socket.on("recording-stopped", onRecStop);
     socket.on("recording-status", onRecStatus);
@@ -252,6 +267,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       socket.off("mic-locked", onMicLocked);
       socket.off("joined-muted", onJoinedMuted);
       socket.off("hand-changed", onHandChanged);
+      socket.off("reaction-changed", onReactionChanged);
+      socket.off("reactions-cleared", onReactionsCleared);
       socket.off("hands-cleared", onHandsCleared);
       socket.off("recording-started", onRecStart);
       socket.off("recording-stopped", onRecStop);
@@ -324,6 +341,27 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       await emitAck("raise-hand", { raised: !handRaised });
     } catch (err) {
       console.error("[MeetingRoom] raise hand failed", err);
+      showToast(err.message);
+    }
+  };
+
+  const onReact = async (reaction) => {
+    try {
+      // The server treats a repeat of the thumb you already show as taking it
+      // back, so this one call covers setting, switching and clearing.
+      await emitAck("set-reaction", { reaction });
+    } catch (err) {
+      console.error("[MeetingRoom] set reaction failed", err);
+      showToast(err.message);
+    }
+  };
+
+  const onClearReactions = async () => {
+    try {
+      const res = await emitAck("clear-reactions", {});
+      showToast(res.cleared ? `Cleared ${res.cleared} reaction(s)` : "No reactions to clear");
+    } catch (err) {
+      console.error("[MeetingRoom] clear reactions failed", err);
       showToast(err.message);
     }
   };
@@ -476,6 +514,11 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         activePoll={activePoll}
         handRaised={handRaised}
         raisedCount={raisedCount}
+        myReaction={myReaction}
+        thumbsUp={thumbsUp}
+        thumbsDown={thumbsDown}
+        onReact={onReact}
+        onClearReactions={onClearReactions}
         onToggleCam={media.toggleCam}
         onToggleMic={onToggleMic}
         onMuteOthers={onMuteOthers}

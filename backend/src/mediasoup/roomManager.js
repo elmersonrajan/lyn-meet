@@ -55,6 +55,12 @@ class Peer {
     this.handRaised = false;
     // Ordering key so staff can answer hands in the order they went up.
     this.handRaisedAt = null;
+    // "up" | "down" | null. A thumbs down is a quiet "I am lost", which is the
+    // whole point of it -- a student who will not interrupt a class of forty
+    // to say so will press a button.
+    this.reaction = null;
+    // Same idea as handRaisedAt: whoever got stuck first is dealt with first.
+    this.reactionAt = null;
     this.joinedAt = Date.now();
   }
 
@@ -68,6 +74,8 @@ class Peer {
       disconnected: this.disconnected,
       handRaised: this.handRaised,
       handRaisedAt: this.handRaisedAt,
+      reaction: this.reaction,
+      reactionAt: this.reactionAt,
     };
   }
 }

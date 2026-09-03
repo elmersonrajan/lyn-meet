@@ -1812,3 +1812,62 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   cursor: pointer;
   text-decoration: underline;
 }
+
+/* ---------------------------------------------------------------------------
+   Thumbs up / thumbs down
+
+   Green carries "following along" and amber carries "not following", matching
+   the raised-hand amber already used for "needs the teacher". Red is left for
+   destructive things -- a stuck student is not an error.
+   --------------------------------------------------------------------------- */
+
+.react-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+/* The hand count already claims the free space; these sit beside it. */
+.hand-count + .react-count { margin-left: 6px; }
+.react-count.up { background: var(--ok, #15803d); }
+.react-count.down { background: var(--warn); }
+.react-count:first-of-type { margin-left: auto; }
+.react-count + .react-count { margin-left: 6px; }
+
+/* A row where someone said they are lost, sorted to the top of the list. */
+.prow.stuck {
+  background: #fff8ec;
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+.prow.stuck:hover { background: #fef3de; }
+
+.react-tag {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.react-tag.up { background: #e6f5ec; color: var(--ok, #15803d); }
+.react-tag.down { background: #fdf0d9; color: #8a5200; }
+
+/* Toolbar buttons. The pressed state is the strong one: a student needs to
+   see that their own press registered, from across a phone screen. */
+.tbtn.react.up.on {
+  border-color: var(--ok, #15803d);
+  background: #e6f5ec;
+  color: #14532d;
+}
+.tbtn.react.down.on {
+  border-color: var(--warn);
+  background: #fff8ec;
+  color: #8a5200;
+}
+.tbtn .badge.up { background: var(--ok, #15803d); }
+.tbtn .badge.down { background: var(--warn); }

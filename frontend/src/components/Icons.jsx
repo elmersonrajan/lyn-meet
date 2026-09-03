@@ -260,3 +260,17 @@ export const IconUserMinus = (p) => (
     <path d="M16 11h6" />
   </Svg>
 );
+
+export const IconThumbUp = (p) => (
+  <Svg {...p}>
+    <path d="M7 21V10l4.5-7a2 2 0 0 1 3.2 2.1L13 10h5.2a2.2 2.2 0 0 1 2.15 2.7l-1.6 6.5A2.5 2.5 0 0 1 16.3 21z" />
+    <path d="M7 10H4.5A1.5 1.5 0 0 0 3 11.5v8A1.5 1.5 0 0 0 4.5 21H7" />
+  </Svg>
+);
+
+export const IconThumbDown = (p) => (
+  <Svg {...p}>
+    <path d="M7 3v11l4.5 7a2 2 0 0 0 3.2-2.1L13 14h5.2a2.2 2.2 0 0 0 2.15-2.7l-1.6-6.5A2.5 2.5 0 0 0 16.3 3z" />
+    <path d="M7 14H4.5A1.5 1.5 0 0 1 3 12.5v-8A1.5 1.5 0 0 1 4.5 3H7" />
+  </Svg>
+);

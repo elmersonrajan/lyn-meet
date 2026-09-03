@@ -14,6 +14,9 @@ import {
   IconClipboard,
   IconHand,
   IconHandLower,
+  IconThumbUp,
+  IconThumbDown,
+  IconTrash,
 } from "./Icons.jsx";
 
 export default function Toolbar({
@@ -28,6 +31,9 @@ export default function Toolbar({
   activePoll,
   handRaised,
   raisedCount,
+  myReaction,
+  thumbsUp,
+  thumbsDown,
   onToggleCam,
   onToggleMic,
   onMuteOthers,
@@ -38,6 +44,8 @@ export default function Toolbar({
   onOpenAttendance,
   onToggleHand,
   onLowerAllHands,
+  onReact,
+  onClearReactions,
   onLeave,
 }) {
   const staff = isTeacher || isCoordinator;
@@ -94,6 +102,54 @@ export default function Toolbar({
           </span>
           Lower All
           <span className="badge">{raisedCount > 9 ? "9+" : raisedCount}</span>
+        </button>
+      ) : null}
+
+      {/* Counts sit on the buttons themselves rather than in a separate strip:
+          the number a student cares about is "did mine register", and the
+          number a teacher cares about is the running total. Both are the same
+          number, so it belongs in one place. */}
+      <button
+        className={`tbtn react up ${myReaction === "up" ? "on" : ""}`}
+        onClick={() => onReact("up")}
+        title={myReaction === "up" ? "Take back your thumbs up" : "I am following along"}
+        aria-pressed={myReaction === "up"}
+      >
+        <span className="ico">
+          <IconThumbUp />
+        </span>
+        Following
+        {thumbsUp > 0 ? <span className="badge up">{thumbsUp > 99 ? "99+" : thumbsUp}</span> : null}
+      </button>
+
+      <button
+        className={`tbtn react down ${myReaction === "down" ? "on" : ""}`}
+        onClick={() => onReact("down")}
+        title={myReaction === "down" ? "Take back your thumbs down" : "I am not following"}
+        aria-pressed={myReaction === "down"}
+      >
+        <span className="ico">
+          <IconThumbDown />
+        </span>
+        Not Following
+        {thumbsDown > 0 ? (
+          <span className="badge down">{thumbsDown > 99 ? "99+" : thumbsDown}</span>
+        ) : null}
+      </button>
+
+      {staff && thumbsUp + thumbsDown > 0 ? (
+        <button
+          className="tbtn attn"
+          onClick={onClearReactions}
+          title={`Clear all ${thumbsUp + thumbsDown} reaction(s)`}
+        >
+          <span className="ico">
+            <IconTrash />
+          </span>
+          Clear Reactions
+          <span className="badge">
+            {thumbsUp + thumbsDown > 9 ? "9+" : thumbsUp + thumbsDown}
+          </span>
         </button>
       ) : null}
 
