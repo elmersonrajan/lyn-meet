@@ -4,6 +4,21 @@ import { getSocket, emitAck } from "../services/socket.js";
 import { readMeetingIdFromUrl } from "../services/meetingLink.js";
 import { fetchMe, goToLogin, logout, redeemHandoffToken } from "../services/auth.js";
 
+/**
+ * Auto-join fires once per page load, not once per mount.
+ *
+ * Leaving a meeting unmounts the room and mounts this lobby again, with the
+ * class still in the URL and the cookie still valid -- so a ref inside the
+ * component would reset and pull the person straight back into the meeting
+ * they just left. That made Leave and End Session look broken: both worked,
+ * and both were undone within the same tick.
+ *
+ * Module scope survives the remount and still resets on a real page load,
+ * which is exactly the boundary wanted: arriving from a link joins, leaving
+ * stays left.
+ */
+let autoJoinSpent = false;
+
 /** Shown against the person's name so they can see how they will appear. */
 const ROLE_LABELS = {
   student: "Student",
@@ -149,8 +164,10 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
    */
   const autoTried = useRef(false);
   useEffect(() => {
-    if (!me || !invited || !meetingId || autoTried.current) return;
+    if (!me || !invited || !meetingId) return;
+    if (autoTried.current || autoJoinSpent) return;
     autoTried.current = true;
+    autoJoinSpent = true;
     setAutoJoining(true);
     enterMeeting(meetingId);
   }, [me, invited, meetingId, enterMeeting]);
