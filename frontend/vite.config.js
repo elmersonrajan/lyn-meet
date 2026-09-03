@@ -20,6 +20,13 @@ export default defineConfig({
     proxy: {
       "/socket.io": { target: "http://127.0.0.1:5000", ws: true, changeOrigin: true },
       "/api": { target: "http://127.0.0.1:5000" },
+      // Sign-in. Same trap as /.well-known below: without an entry here Vite
+      // answers /auth/me and /auth/handoff with index.html, so the SPA gets a
+      // page where it expected JSON and every sign-in fails. In production
+      // nginx forwards everything to this dev server rather than routing
+      // /api itself, so this list -- not the nginx config -- is what decides
+      // whether a path reaches the backend at all.
+      "/auth": { target: "http://127.0.0.1:5000" },
       "/recordings": { target: "http://127.0.0.1:5000" },
       "/health": { target: "http://127.0.0.1:5000" },
       // Domain ownership proof for the mobile apps. Without this the SPA

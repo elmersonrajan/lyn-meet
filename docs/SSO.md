@@ -55,7 +55,15 @@ https://meet.lynindia.in/?lynmeet=10214&TockenID=ya29...
 nginx serves the SPA at `/`, so **the token never reaches this backend in that
 request**. The page lifts it out of the query string, `POST`s it to
 `/auth/handoff` in a request body, and rewrites its own URL with
-`history.replaceState`. So the token stays out of our access logs, out of
+`history.replaceState`.
+
+> **Deployment note.** nginx's `meet.lynindia.in` block has a single
+> `location /` that forwards everything to the Vite server on 5173 — it has no
+> `/api` or `/socket.io` block of its own. Every backend path therefore reaches
+> port 5000 through the **`proxy` list in `frontend/vite.config.js`**, so a new
+> backend route has to be added there or Vite answers it with `index.html` and
+> the SPA receives a page where it expected JSON. This is the same trap the
+> `/.well-known` entry in that file already documents. So the token stays out of our access logs, out of
 `Referer` headers (there is a `no-referrer` meta tag as well) and out of the
 back button.
 
