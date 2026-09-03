@@ -17,6 +17,7 @@
 const express = require("express");
 const { config } = require("./config");
 const ticket = require("./ticket");
+const handoff = require("./handoff");
 const session = require("./session");
 const directory = require("./directory");
 const { requireAuth } = require("./middleware");
@@ -102,6 +103,73 @@ function createAuthRouter() {
         return res.redirect(302, loginRedirectUrl(next));
       }
       log.error("sso callback failed", err);
+      res.status(500).type("html").send(denialPage("Sign-in is temporarily unavailable."));
+    }
+  });
+
+  /**
+   * Token hand-off from lynindia.in.
+   *
+   * POST, not GET, and that is the whole point. The platform sends people to
+   * `https://meet.lynindia.in/?lynmeet=10214&TockenID=...`, which nginx serves
+   * as the SPA -- the token never reaches this server in that request. The page
+   * lifts it out of the query string, posts it here in a body, and rewrites its
+   * own URL. So the token stays out of our access logs, out of Referer headers
+   * and out of the address bar, and the row is deleted as it is redeemed.
+   *
+   * It cannot be kept out of nginx's log of that first request, which is why
+   * single use matters: by the time anyone reads that log, the token is spent.
+   */
+  router.post("/handoff", async (req, res) => {
+    try {
+      const identity = await handoff.redeem(req.body?.token);
+      session.setCookie(res, session.issue(identity));
+      res.json({
+        ok: true,
+        user: {
+          email: identity.email,
+          name: identity.name,
+          role: identity.role,
+          isStaff: identity.role === "teacher" || identity.role === "coordinator",
+        },
+      });
+    } catch (err) {
+      if (err instanceof handoff.HandoffError) {
+        // 403 for a real refusal, 401 for a stale link -- the SPA sends the
+        // user back to lynindia.in on 401 and shows the reason on 403.
+        const status = err.reason === "not-authorised" ? 403 : 401;
+        return res.status(status).json({
+          ok: false,
+          error: err.message,
+          reason: err.reason,
+          loginUrl: config.loginUrl,
+        });
+      }
+      log.error("hand-off failed", err);
+      res.status(500).json({ ok: false, error: "Sign-in is temporarily unavailable" });
+    }
+  });
+
+  /**
+   * Fallback for the case where nginx *does* route the root request here (or
+   * someone opens the hand-off URL against the API host directly). Redeems the
+   * token and bounces to the clean URL so it leaves the address bar.
+   */
+  router.get("/handoff", async (req, res) => {
+    const meeting = String(req.query.lynmeet || "").trim();
+    const clean = meeting ? `/?lynmeet=${encodeURIComponent(meeting)}` : "/";
+    try {
+      const identity = await handoff.redeem(req.query.TockenID || req.query.TokenID);
+      session.setCookie(res, session.issue(identity));
+      res.redirect(302, clean);
+    } catch (err) {
+      if (err instanceof handoff.HandoffError) {
+        if (err.reason === "not-authorised") {
+          return res.status(403).type("html").send(denialPage(err.message));
+        }
+        return res.redirect(302, loginRedirectUrl(clean));
+      }
+      log.error("hand-off redirect failed", err);
       res.status(500).type("html").send(denialPage("Sign-in is temporarily unavailable."));
     }
   });

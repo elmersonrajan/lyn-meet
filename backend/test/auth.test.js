@@ -27,6 +27,8 @@ const session = require("../src/auth/session");
 const replay = require("../src/auth/replay");
 const { safeNext } = require("../src/auth/routes");
 const { roleFor } = require("../src/auth/directory");
+const { isScheduleId } = require("../src/auth/enrolment");
+const handoff = require("../src/auth/handoff");
 
 function mint(overrides = {}, secret = SSO_SECRET) {
   const { claims = {}, ...opts } = overrides;
@@ -188,4 +190,39 @@ test("role mapping follows the organisation's own chart: A/Q/O coordinate, S/M/C
   // silent student default -- these arrive from a database column.
   assert.strictEqual(roleFor(" t "), "teacher");
   assert.strictEqual(roleFor("a"), "coordinator");
+});
+
+test("isScheduleId accepts only a plain positive integer", () => {
+  assert.ok(isScheduleId("10214"));
+  assert.ok(isScheduleId(" 10214 "), "surrounding whitespace is trimmed");
+  assert.ok(isScheduleId(10214));
+  // Anything that is not purely digits is treated as an ad-hoc room name and
+  // never reaches the ScheduleID query.
+  for (const bad of [
+    "MATH-101",
+    "10214; DROP TABLE Students",
+    "10214 OR 1=1",
+    "1e5",
+    "-1",
+    "10.5",
+    "99999999999", // wider than the column
+    "",
+    null,
+    undefined,
+  ]) {
+    assert.strictEqual(isScheduleId(bad), false, `${JSON.stringify(bad)} must not look like a ScheduleID`);
+  }
+});
+
+test("hand-off rejects an absent or implausible token before touching the database", async () => {
+  // These must fail on shape alone: the test has no database, so reaching a
+  // query would throw a connection error instead of a HandoffError.
+  await assert.rejects(handoff.redeem(""), (err) => err.reason === "missing");
+  await assert.rejects(handoff.redeem(null), (err) => err.reason === "missing");
+  await assert.rejects(handoff.redeem("   "), (err) => err.reason === "missing");
+  await assert.rejects(handoff.redeem("tooshort"), (err) => err.reason === "malformed");
+  await assert.rejects(
+    handoff.redeem("x".repeat(handoff.MAX_TOKEN_LENGTH + 1)),
+    (err) => err.reason === "malformed",
+  );
 });

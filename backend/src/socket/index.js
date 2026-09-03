@@ -13,6 +13,7 @@ const { createLogger } = require("../utils/logger");
 const meetingLog = require("../utils/meetingLog");
 const attendance = require("../attendance/attendanceLog");
 const renderQueue = require("../recording/renderQueue");
+const enrolment = require("../auth/enrolment");
 
 const log = createLogger("Socket");
 
@@ -212,32 +213,48 @@ function attachSocketHandlers(io) {
         const auth = socket.data.auth;
         if (!auth) throw new Error("Not signed in");
 
-        const role = normalizeRole(auth.role);
-        // Upper case is the rule, and this is where it is enforced: the room is
-        // keyed by this string, so "neet26" and "NEET26" were two rooms, and
-        // anyone who typed it in lower case sat alone in an empty meeting. The
-        // browser upper-cases the field too, but a stale link or a direct call
-        // has to land in the same place.
+        // Rooms are ClassSchedule.ScheduleID now, so they are digits. Upper
+        // casing is kept for the ad-hoc names still allowed in testing, where
+        // it remains load-bearing: the room is keyed by this string, so
+        // "neet26" and "NEET26" were two rooms and anyone who typed it in
+        // lower case sat alone in an empty meeting.
         const meetingId = String(payload?.meetingId || "").trim().toUpperCase();
-        log.action("join-room", {
-          email: auth.email,
-          meetingId,
-          role,
-          socketId: socket.id,
-        });
 
         if (!meetingId) {
           throw new Error("A meeting ID is required");
         }
-        if (payload?.role && normalizeRole(payload.role) !== role) {
+        if (payload?.role) {
           // Not fatal -- the claim is simply discarded -- but worth a line in
           // the log, because a mismatch is either a stale client or a probe.
           log.warn("client-supplied role ignored", {
             email: auth.email,
             claimed: payload.role,
-            actual: role,
           });
         }
+
+        /**
+         * Being signed in is not the same as belonging in this class.
+         *
+         * ScheduleIDs are sequential, so without this anyone signed in could
+         * count downwards from their own class and walk into every other
+         * lesson running that day. The decision can lower the role -- a
+         * teacher in a class that is not theirs joins as an observer -- but
+         * never raises it.
+         */
+        const verdict = await enrolment.authorize(auth, meetingId);
+        log.action("join-room", {
+          email: auth.email,
+          meetingId,
+          role: verdict.role,
+          allowed: verdict.allowed,
+          why: verdict.reason,
+          socketId: socket.id,
+        });
+        if (!verdict.allowed) {
+          throw new Error(verdict.reason);
+        }
+
+        const role = normalizeRole(verdict.role);
         const name = displayNameFor(role, auth.name);
 
         const room = await getOrCreateRoom(meetingId);

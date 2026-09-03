@@ -38,6 +38,16 @@ function getPool() {
     // Identity comparisons must not depend on the client's locale.
     charset: "utf8mb4_general_ci",
     timezone: "Z",
+    /**
+     * DATE columns come back as plain strings, not Date objects.
+     *
+     * Without this the driver builds a Date at local midnight and a
+     * `ScheduleDate` of 2026-09-02 reads back as 2026-09-01T18:30:00Z on an
+     * IST machine -- a whole day early. Every "is this class today" question
+     * is therefore asked in SQL against CURDATE(), and dates that do reach
+     * JavaScript stay as the string the database holds.
+     */
+    dateStrings: ["DATE", "DATETIME"],
   });
   log.info("pool created", {
     host: process.env.DB_HOST,

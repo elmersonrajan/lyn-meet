@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#163a6b" />
+    <!-- The sign-in link from lynindia.in arrives with a token in the query
+         string. Without this, every image, font and API call made before the
+         page scrubs its own URL would carry that token to the other end in a
+         Referer header. -->
+    <meta name="referrer" content="no-referrer" />
     <!-- Served straight from public/. See public/README.md. -->
     <link rel="icon" type="image/png" href="/lyn-logo-cross.png" />
     <link rel="apple-touch-icon" href="/lyn-logo-cross.png" />

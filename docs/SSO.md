@@ -40,6 +40,97 @@ Two independent checks have to pass: the ticket proves *which account*, the
 database decides *whether* and *as what*. A perfect ticket for someone who was
 removed from the organisation this morning gets a 403.
 
+## How it actually works today
+
+The platform sends people to:
+
+```
+https://meet.lynindia.in/?lynmeet=10214&TockenID=ya29...
+```
+
+- `lynmeet` is a **`ClassSchedule.ScheduleID`** — the room.
+- `TockenID` is a row in **`AccessToken(EmailID, TokenID)`**, written by
+  lynindia.in at login. That table is the session store.
+
+nginx serves the SPA at `/`, so **the token never reaches this backend in that
+request**. The page lifts it out of the query string, `POST`s it to
+`/auth/handoff` in a request body, and rewrites its own URL with
+`history.replaceState`. So the token stays out of our access logs, out of
+`Referer` headers (there is a `no-referrer` meta tag as well) and out of the
+back button.
+
+`/auth/handoff` then:
+
+1. looks the token up in `AccessToken` — it is an opaque pointer, never parsed;
+2. **deletes the row**, so the token is single-use;
+3. re-derives role from `v_Users` via `directory.lookup()`;
+4. issues the httpOnly session cookie.
+
+### Why single-use matters here
+
+`AccessToken` has no `ExpiresAt` column, so a token that is not consumed works
+until it is overwritten. Deleting it on redemption bounds a leak — from browser
+history on a shared centre PC, or from nginx's log of that first GET — to the
+gap between the redirect and the first page load.
+
+The one residual case is a token that is minted and *never clicked*: it lingers.
+A `CreatedAt` column plus a nightly `DELETE` would close that; without one there
+is nothing to sweep on.
+
+This needs `DELETE` on `LYNDev.AccessToken`. If the grant is missing, sign-in
+still works and an error is logged saying the token stayed live.
+
+### `v_UserforMeet` is deliberately not used for roles
+
+That view maps `UserType` itself, and its `LearningCentres` branch emits `'C'`
+— which in the role chart means Co-ordinator. Every Learning Centre would
+arrive able to mute the room and close the class. Its `Users` branch also
+returns `''` for `Q` and `O`, and `ClassAdmins`/`StudentException` pass raw
+codes straight through.
+
+So only the email is taken from the token, and the role comes from `v_Users`
+through the single tested map in `auth/directory.js`. Nothing here has to
+change if that view is fixed later.
+
+## Meeting-level authorisation
+
+Signing in proves organisation membership. It does not prove you belong in
+*this* class — and ScheduleIDs are sequential, so anyone signed in can try
+`10213`, `10212`, `10211`. The random `xxx-xxxx-xxx` codes made that
+impractical; integers make it trivial.
+
+`auth/enrolment.js` decides per meeting. **It can lower a role, never raise it.**
+
+| Who | Outcome |
+|---|---|
+| Coordinator (A/Q/O) | `coordinator` in any class — the point of the role |
+| Teacher named on the schedule | `teacher` |
+| Any other teacher | `student` observer, logged (a substitute is not locked out, but cannot take the class over) |
+| Class admin on the schedule | `coordinator` for that class |
+| Student enrolled in the class | `student` |
+| Student in another class | **refused** |
+| Centre, mentor, evaluator, etc. | `student` observer — they hold no enrolment record, so requiring one would lock them out of everything |
+| Cancelled or unknown schedule | **refused** |
+
+Enrolment is `ClassSchedule → ClassSubject → ClassID` against `Students.Class`,
+plus a same-day `StudentException`.
+
+Verified against live data on ScheduleID 10214 (class 10, Maths Tamil): the
+assigned teacher got `teacher`, another teacher was demoted to observer, an
+enrolled student was admitted, a student from another class was refused, a
+coordinator passed, a Learning Centre came in as an observer, and unknown,
+ad-hoc and cancelled ids were all refused.
+
+Note that a class-10 student *can* join 10213–10211 — those are the same
+class's other lessons, which is correct.
+
+### Dates stay in SQL
+
+`ScheduleDate` is a DATE, and the driver would build it at local midnight —
+`2026-09-02` reads back as `2026-09-01T18:30:00Z` on an IST box, a day early.
+The pool sets `dateStrings` and every "is this today" question is asked as
+`= CURDATE()` inside the query.
+
 ## What the main site has to implement
 
 One endpoint. It is the only change on the lynindia.in side.

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useUser } from "../context/UserContext.jsx";
 import { getSocket, emitAck } from "../services/socket.js";
 import { readMeetingIdFromUrl } from "../services/meetingLink.js";
-import { fetchMe, goToLogin, logout } from "../services/auth.js";
+import { fetchMe, goToLogin, logout, redeemHandoffToken } from "../services/auth.js";
 
 /** Shown against the person's name so they can see how they will appear. */
 const ROLE_LABELS = {
@@ -37,7 +37,12 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
     let cancelled = false;
     (async () => {
       try {
-        const user = await fetchMe();
+        // A hand-off token in the URL takes priority: it is single-use, so it
+        // has to be redeemed on this page load or it is wasted. Only if there
+        // is no token do we fall back to asking about an existing cookie.
+        let user = await redeemHandoffToken();
+        if (cancelled) return;
+        if (!user) user = await fetchMe();
         if (cancelled) return;
         if (!user) {
           goToLogin();
@@ -46,7 +51,14 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
         setMe(user);
         setSession((s) => ({ ...s, name: user.name, role: user.role, email: user.email }));
       } catch (err) {
-        if (!cancelled) setError(err.message || "Could not verify your sign-in");
+        if (cancelled) return;
+        // A stale or already-used link is worth another trip through the main
+        // site; a refused account is not, and the reason is shown instead.
+        if (err.recoverable) {
+          goToLogin();
+          return;
+        }
+        setError(err.message || "Could not verify your sign-in");
       } finally {
         if (!cancelled) setChecking(false);
       }
@@ -168,24 +180,25 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
           ) : null}
 
           <div className="field">
-            <label htmlFor="mid">Meeting ID</label>
-            {/* Meeting ids are upper case, and the server treats them that way,
-                so typing in lower case would otherwise land you in an empty room
-                of your own with no hint as to why. Converted as it is typed
-                rather than on submit, so what you see is what you join. */}
+            <label htmlFor="mid">Class ID</label>
+            {/* A meeting is a ClassSchedule.ScheduleID, so this is normally
+                filled in by the link from lynindia.in and nobody types it. It
+                stays editable for staff joining a class they were told about
+                by number. Upper casing is kept for the ad-hoc room names still
+                used in testing, where the room key is the raw string. */}
             <input
               id="mid"
               value={meetingId}
               onChange={(e) => setMeetingId(e.target.value.toUpperCase())}
-              style={{ textTransform: "uppercase" }}
+              inputMode="numeric"
               autoCapitalize="characters"
               autoCorrect="off"
               spellCheck={false}
-              placeholder="e.g. MATH-101"
+              placeholder="e.g. 10214"
               required
             />
             {invited && meetingId === invited ? (
-              <p className="field-note">Meeting filled in from your invite link.</p>
+              <p className="field-note">Class filled in from your link.</p>
             ) : null}
           </div>
 
