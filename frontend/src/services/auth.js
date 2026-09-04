@@ -14,40 +14,45 @@ let cachedLoginUrl = "/auth/login";
 const TOKEN_PARAMS = ["TockenID", "TokenID", "tockenid", "tokenid"];
 
 /**
- * Redeems a hand-off token if lynindia.in sent us here with one.
+ * The hand-off token, lifted out of the URL once when this module loads.
  *
- * The platform links to
- * `https://meet.lynindia.in/?lynmeet=10214&TockenID=...`, so the token arrives
- * in the query string of a page nginx serves -- it never reaches our backend in
- * that request. This lifts it out, posts it in a body (where it stays out of
- * access logs and Referer headers), and then rewrites the URL.
+ * Capturing it here rather than inside the component is what makes the arrival
+ * survive React StrictMode, which mounts every component twice. The old code
+ * read the URL inside the effect and scrubbed it synchronously, so the second
+ * mount found nothing, fell through to asking about a cookie, and raced the
+ * first mount's still-in-flight exchange. The cookie usually lost that race, so
+ * the *first* click of a link bounced back to lynindia.in and only the second
+ * or third worked -- by which point a cookie existed from the earlier attempt.
  *
- * `replaceState` is used rather than `pushState` so the token-bearing URL is
- * not left behind in the back button or the history list. It is still in
- * nginx's log of that first GET, which is exactly why the server deletes the
- * row as it redeems it: by the time anyone reads that log, the token is spent.
- *
- * @returns {Promise<{email,name,role,isStaff}|null>} the user if a token was
- *   present and valid; null if there was no token at all
- * @throws {Error} when a token was present but refused
+ * `replaceState` rather than `pushState` so the token-bearing URL is not left
+ * in the back button. It is still in nginx's log of that first GET, which is
+ * why the server deletes the row as it redeems it.
  */
-export async function redeemHandoffToken() {
-  const url = new URL(window.location.href);
-  const key = TOKEN_PARAMS.find((p) => url.searchParams.get(p));
-  if (!key) return null;
-
-  const token = url.searchParams.get(key);
-
-  // Scrub first, ask questions second. If the POST throws, or the user closes
-  // the tab midway, the token should already be gone from the address bar.
-  for (const p of TOKEN_PARAMS) url.searchParams.delete(p);
-  const cleaned = url.pathname + (url.searchParams.toString() ? `?${url.searchParams}` : "") + url.hash;
+const arrivalToken = (() => {
   try {
-    window.history.replaceState(null, "", cleaned);
-  } catch {
-    // Non-fatal: an unusual embedding context may forbid it.
-  }
+    const url = new URL(window.location.href);
+    const key = TOKEN_PARAMS.find((p) => url.searchParams.get(p));
+    if (!key) return null;
+    const token = url.searchParams.get(key);
 
+    for (const p of TOKEN_PARAMS) url.searchParams.delete(p);
+    const query = url.searchParams.toString();
+    const cleaned = url.pathname + (query ? `?${query}` : "") + url.hash;
+    try {
+      window.history.replaceState(null, "", cleaned);
+    } catch {
+      // Non-fatal: an unusual embedding context may forbid it.
+    }
+    return token;
+  } catch {
+    return null;
+  }
+})();
+
+/** The single exchange for this page load. Every caller awaits the same one. */
+let handoffInFlight = null;
+
+async function exchange(token) {
   const res = await fetch("/auth/handoff", {
     method: "POST",
     credentials: "include",
@@ -67,8 +72,21 @@ export async function redeemHandoffToken() {
 }
 
 /**
- * @returns {Promise<{email, name, role, isStaff}|null>} null when signed out
+ * Redeems the hand-off token, if this page load arrived with one.
+ *
+ * Memoised on purpose: the token is single-use, so a second exchange would
+ * spend a token that no longer exists. Both StrictMode mounts get the same
+ * promise and therefore the same answer.
+ *
+ * @returns {Promise<{email,name,role,isStaff}|null>} null when no token arrived
+ * @throws {Error} when a token arrived but was refused
  */
+export function redeemHandoffToken() {
+  if (!arrivalToken) return Promise.resolve(null);
+  if (!handoffInFlight) handoffInFlight = exchange(arrivalToken);
+  return handoffInFlight;
+}
+
 export async function fetchMe() {
   const res = await fetch("/auth/me", {
     credentials: "include",
