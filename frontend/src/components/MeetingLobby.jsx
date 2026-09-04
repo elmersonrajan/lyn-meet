@@ -56,13 +56,27 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
     (async () => {
       try {
         // A hand-off token in the URL takes priority: it is single-use, so it
-        // has to be redeemed on this page load or it is wasted. Only if there
-        // is no token do we fall back to asking about an existing cookie.
-        let user = await redeemHandoffToken();
+        // has to be redeemed on this page load or it is wasted.
+        let user = null;
+        try {
+          user = await redeemHandoffToken();
+        } catch (err) {
+          if (cancelled) return;
+          // A refused *account* is final and the reason is shown. A spent or
+          // stale token is not: the session cookie lasts eight hours, and
+          // someone who leaves a class and comes back through the same link
+          // still holds one. Bouncing them to lynindia.in for a fresh token
+          // was how "leave, then rejoin" became impossible -- the site handed
+          // back the same spent link and the loop never broke.
+          if (!err.recoverable) throw err;
+          console.warn("[Lobby] hand-off token spent — falling back to the session");
+        }
         if (cancelled) return;
+
         if (!user) user = await fetchMe();
         if (cancelled) return;
         if (!user) {
+          // No token and no session: genuinely signed out.
           goToLogin();
           return;
         }
@@ -70,12 +84,6 @@ export default function MeetingLobby({ onJoined, onJoinPayload }) {
         setSession((s) => ({ ...s, name: user.name, role: user.role, email: user.email }));
       } catch (err) {
         if (cancelled) return;
-        // A stale or already-used link is worth another trip through the main
-        // site; a refused account is not, and the reason is shown instead.
-        if (err.recoverable) {
-          goToLogin();
-          return;
-        }
         setError(err.message || "Could not verify your sign-in");
       } finally {
         if (!cancelled) setChecking(false);
