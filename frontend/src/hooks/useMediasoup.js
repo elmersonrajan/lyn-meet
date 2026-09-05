@@ -30,6 +30,20 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
   const [sharing, setSharing] = useState(false);
   const [ready, setReady] = useState(false);
 
+  /**
+   * The live capture, held in a ref as well as in state.
+   *
+   * State is what the tile renders from; this is what the code reaches for
+   * when it has to release a device. They must not be allowed to disagree:
+   * `cleanup` is called from socket handlers registered once, so reading the
+   * stream out of a closure there means stopping whatever was current when the
+   * handler was created -- often nothing at all, while the real camera stays
+   * open and its light stays on.
+   */
+  const localStreamRef = useRef(null);
+  /** The getDisplayMedia capture, for the same reason. */
+  const localScreenRef = useRef(null);
+
   const teacherStreamRef = useRef(new MediaStream());
   const screenStreamRef = useRef(new MediaStream());
   const remoteAudioRef = useRef(new Map());
@@ -40,6 +54,23 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
   useEffect(() => {
     peerIdRef.current = peerId;
   }, [peerId]);
+
+  /** The one way the local stream changes, so the ref can never fall behind. */
+  const applyLocalStream = useCallback((stream) => {
+    localStreamRef.current = stream;
+    setLocalStream(stream);
+  }, []);
+
+  /** Releases every device a stream is holding. Safe to call on nothing. */
+  const releaseStream = useCallback((stream) => {
+    for (const track of stream ? stream.getTracks() : []) {
+      try {
+        track.stop();
+      } catch (err) {
+        console.error("[Mediasoup] track.stop failed", err);
+      }
+    }
+  }, []);
 
   const publishRemoteAudio = useCallback(() => {
     setRemoteAudio(
@@ -151,8 +182,13 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
         ? { audio: true, video: CAM_CONSTRAINTS }
         : { audio: true, video: false };
       console.log("[Mediasoup] getUserMedia", constraints, { role });
+      // A reconnect runs this again, and the previous capture is still holding
+      // the camera and microphone. Left alone, the machine ends up with two
+      // streams owning the device and only one of them is ever switched off --
+      // so the light stays on no matter what the button says.
+      releaseStream(localStreamRef.current);
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      setLocalStream(stream);
+      applyLocalStream(stream);
       if (role === "teacher") setTeacherStream(stream);
 
       const audioTrack = stream.getAudioTracks()[0];
@@ -184,7 +220,7 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
       console.error("[Mediasoup] startLocalMedia failed", err);
       throw err;
     }
-  }, [role]);
+  }, [role, applyLocalStream, releaseStream]);
 
   const initDevice = useCallback(
     async ({ routerRtpCapabilities, iceServers }) => {
@@ -411,7 +447,7 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
         // The audio track is carried across unchanged, so a muted mic stays
         // muted.
         const withCam = new MediaStream([...audio, track]);
-        setLocalStream(withCam);
+        applyLocalStream(withCam);
         setTeacherStream(withCam);
         await emitAck("resume-producer", { source: "video" });
       } else {
@@ -420,7 +456,7 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
         await emitAck("pause-producer", { source: "video" });
         for (const track of localStream ? localStream.getVideoTracks() : []) track.stop();
         const audioOnly = new MediaStream(audio);
-        setLocalStream(audioOnly);
+        applyLocalStream(audioOnly);
         setTeacherStream(audioOnly);
       }
       setCamOn(next);
@@ -432,7 +468,7 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
     } finally {
       camBusyRef.current = false;
     }
-  }, [camOn, localStream, role]);
+  }, [camOn, localStream, role, applyLocalStream]);
 
   const startScreen = useCallback(async () => {
     try {
@@ -448,6 +484,7 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
         appData: { source: "screen" },
       });
       producersRef.current.screen = producer;
+      localScreenRef.current = stream;
       setScreenStream(stream);
       setSharing(true);
       track.onended = async () => {
@@ -479,11 +516,23 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
     }
   }, [screenStream]);
 
+  /**
+   * Everything read from a ref, and no dependencies.
+   *
+   * This is called from socket handlers that were registered once, so a
+   * version of it that closed over state would go on stopping whatever was
+   * current at mount -- which is how a meeting could end with the camera light
+   * still on.
+   */
   const cleanup = useCallback(() => {
     try {
       console.log("[Mediasoup] cleanup");
-      localStream?.getTracks().forEach((t) => t.stop());
-      screenStream?.getTracks().forEach((t) => t.stop());
+      releaseStream(localStreamRef.current);
+      releaseStream(localScreenRef.current);
+      releaseStream(screenStreamRef.current);
+      localStreamRef.current = null;
+      localScreenRef.current = null;
+      setLocalStream(null);
       Object.values(producersRef.current).forEach((p) => {
         try {
           p.close();
@@ -497,7 +546,7 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
     } catch (err) {
       console.error("[Mediasoup] cleanup failed", err);
     }
-  }, [localStream, screenStream]);
+  }, [releaseStream]);
 
   return {
     initDevice,
