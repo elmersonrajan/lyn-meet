@@ -2,6 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as mediasoupClient from "mediasoup-client";
 import { emitAck } from "../services/socket";
 
+/**
+ * One definition for the camera, used both when the meeting starts and every
+ * time it is switched back on -- turning the camera off and on again must not
+ * quietly change the resolution the class is being taught in.
+ */
+const CAM_CONSTRAINTS = { width: 1280, height: 720 };
+
 export function useMediasoup({ socket, role, peerId, enabled }) {
   const deviceRef = useRef(null);
   const sendTransportRef = useRef(null);
@@ -9,6 +16,9 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
   const producersRef = useRef({});
   const consumersRef = useRef(new Map());
   const peerIdRef = useRef(peerId);
+  // Held while a camera is being acquired or released, so the button cannot
+  // start a second capture on top of the first.
+  const camBusyRef = useRef(false);
 
   const [localStream, setLocalStream] = useState(null);
   const [teacherStream, setTeacherStream] = useState(null);
@@ -138,7 +148,7 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
     try {
       const wantCam = role === "teacher";
       const constraints = wantCam
-        ? { audio: true, video: { width: 1280, height: 720 } }
+        ? { audio: true, video: CAM_CONSTRAINTS }
         : { audio: true, video: false };
       console.log("[Mediasoup] getUserMedia", constraints, { role });
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -350,21 +360,77 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
     setMicOn(next);
   }, [micOn, localStream, role]);
 
+  /**
+   * Camera off means the camera is off.
+   *
+   * Disabling the track only blanks the picture: the browser keeps the device
+   * open, and its indicator light stays on. A teacher who has "turned the
+   * camera off" is then still, as far as their laptop is concerned, being
+   * filmed — which is not a cosmetic complaint, it is the difference between a
+   * promise kept and a promise broken. Stopping the track is what actually
+   * hands the camera back to the operating system and puts the light out.
+   *
+   * Coming back therefore needs a fresh capture, and the new track is given to
+   * the SAME producer. replaceTrack swaps what the existing sender carries, so
+   * the producer id students are consuming and the stream the server is
+   * recording both continue uninterrupted. Closing and re-producing would make
+   * every student renegotiate and would cut the recording in two.
+   */
   const toggleCam = useCallback(async () => {
+    if (role !== "teacher") {
+      console.warn("[Mediasoup] only teacher can toggle camera");
+      return;
+    }
+    // Acquiring a camera takes long enough to click the button again, and two
+    // captures in flight would leave one of them owning the device forever.
+    if (camBusyRef.current) return;
+    camBusyRef.current = true;
     try {
-      if (role !== "teacher") {
-        console.warn("[Mediasoup] only teacher can toggle camera");
-        return;
-      }
       const next = !camOn;
       console.log("[Mediasoup] toggleCam", next);
-      localStream?.getVideoTracks().forEach((t) => {
-        t.enabled = next;
-      });
-      await emitAck(next ? "resume-producer" : "pause-producer", { source: "video" });
+      const audio = localStream ? localStream.getAudioTracks() : [];
+
+      if (next) {
+        const fresh = await navigator.mediaDevices.getUserMedia({ video: CAM_CONSTRAINTS });
+        const track = fresh.getVideoTracks()[0];
+        if (!track) throw new Error("the camera returned no video track");
+        if (producersRef.current.video) {
+          await producersRef.current.video.replaceTrack({ track });
+        } else if (sendTransportRef.current) {
+          // No producer to swap into: the camera was refused or absent when
+          // the meeting started, so this is the first one. Turning it on has
+          // to publish rather than resume, otherwise the button would light up
+          // over a camera nobody else can see.
+          producersRef.current.video = await sendTransportRef.current.produce({
+            track,
+            appData: { source: "video" },
+          });
+        }
+        // A new MediaStream object, not a mutated one: the tile binds to the
+        // object, so React has to be handed a different one to re-attach.
+        // The audio track is carried across unchanged, so a muted mic stays
+        // muted.
+        const withCam = new MediaStream([...audio, track]);
+        setLocalStream(withCam);
+        setTeacherStream(withCam);
+        await emitAck("resume-producer", { source: "video" });
+      } else {
+        // Paused first, so nothing more is sent while the device is still
+        // winding down.
+        await emitAck("pause-producer", { source: "video" });
+        for (const track of localStream ? localStream.getVideoTracks() : []) track.stop();
+        const audioOnly = new MediaStream(audio);
+        setLocalStream(audioOnly);
+        setTeacherStream(audioOnly);
+      }
       setCamOn(next);
     } catch (err) {
+      // Most often the camera is being held by another application, or
+      // permission was withdrawn. The button must not be left claiming a
+      // camera that is not on.
       console.error("[Mediasoup] toggleCam failed", err);
+    } finally {
+      camBusyRef.current = false;
     }
   }, [camOn, localStream, role]);
 

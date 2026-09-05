@@ -15,6 +15,18 @@ import React, { useEffect, useRef } from "react";
 export default function InstructorVideo({ stream, name, disconnected, muted, mirror }) {
   const ref = useRef(null);
 
+  /**
+   * A stream is not the same thing as a picture.
+   *
+   * Turning the camera off stops the track and hands the device back, which
+   * leaves the teacher holding a stream that still carries their microphone
+   * and nothing else. Rendering a <video> for that shows a black rectangle,
+   * which reads as a fault rather than as a camera that is off.
+   */
+  const hasPicture = Boolean(
+    stream && stream.getVideoTracks().some((track) => track.readyState === "live"),
+  );
+
   useEffect(() => {
     try {
       if (ref.current) {
@@ -26,13 +38,13 @@ export default function InstructorVideo({ stream, name, disconnected, muted, mir
     } catch (err) {
       console.error("[InstructorVideo] attach failed", err);
     }
-  }, [stream, muted]);
+  }, [stream, muted, hasPicture]);
 
   return (
     <div className="instructor-wrap">
       <div className="side-head">Instructor Video</div>
       <div className="instructor">
-        {stream ? (
+        {hasPicture ? (
           <video
             ref={ref}
             className={mirror ? "mirrored" : ""}
