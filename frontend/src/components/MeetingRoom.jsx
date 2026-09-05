@@ -439,7 +439,25 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     }
   };
 
-  const teacherName = participants.find((p) => p.role === "teacher")?.name || "Teacher";
+  const teacherPeer = participants.find((p) => p.role === "teacher");
+  const teacherName = teacherPeer?.name || "Teacher";
+  /**
+   * Read from the roster rather than from a socket event, because the roster
+   * is also what a late joiner is handed: somebody arriving while the camera
+   * is already off must see it as off, not as a tile that never paints.
+   *
+   * The teacher's own tile goes by camOn instead — their track is stopped
+   * locally the moment they press the button, which is sooner than the server
+   * can tell them what they already know.
+   */
+  const teacherCamOff = Boolean(teacherPeer?.videoOff);
+  const instructorStream = isTeacher
+    ? media.camOn
+      ? media.localStream
+      : null
+    : teacherCamOff
+      ? null
+      : media.teacherStream;
 
   return (
     <div className="room">
@@ -482,7 +500,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         <aside className="side">
           <MeetingInfo meetingId={session.meetingId} />
           <InstructorVideo
-            stream={isTeacher ? media.localStream : media.teacherStream}
+            stream={instructorStream}
             name={teacherName}
             disconnected={teacherDisconnected}
             muted={isTeacher}
