@@ -33,6 +33,11 @@ recording of the same class on the same day becomes `..._2.mp4`.
 4. List: `http://59.96.57.40:5000/api/recordings`
 5. Needs **ffmpeg** on the server: `sudo dnf install ffmpeg` (or `apt install ffmpeg`)
 6. If teacher internet drops, recording **keeps running** for 120s (reconnect).
+7. When the render finishes, the class is published to `YouTubeRecords` as
+   `(ScheduleID, VideoURL)` — the row lynindia.in reads to show a class its
+   video. The URL is this server's own playback address, so replacing it with a
+   real YouTube link later is an edit to that column and nothing else. Off
+   switch: `RECORDING_DB_WRITES=0`; set `RECORDING_PUBLIC_BASE_URL`.
 
 Capture and layout are two stages. One ffmpeg process ingests every RTP stream
 through a single SDP into one Matroska file, so audio, camera and screen share
@@ -192,3 +197,35 @@ In/out times and duration per person. The Attendance button is visible to the
 A drop and rejoin counts as two sessions and the disconnected gap is excluded
 from the total, so nobody is credited for time they were away. Only meetings
 that ran after this feature was deployed have data.
+
+### Into the platform database
+
+The `.jsonl` file stays the record; every row below is a mirror of it, written
+as people join and leave. A class needs no button pressed and no spreadsheet
+uploaded.
+
+| Table | What lands there |
+| --- | --- |
+| `AttendanceLog` | one row per period of presence — `InTime`, `OutTime`, `SessionID` = the ScheduleID |
+| `Attendance` | the register: one row per student per class-day, `duration` excluding gaps |
+| `TeacherAttendance` | the teacher who took the class |
+| `AdminAttendance` | a coordinator supervising it |
+
+`Subject`, `Class` and `Medium` come from `ClassSubject`, and `AttendDate` from
+`ClassSchedule` — the same way the site's own rows are built. Times read
+`6:59 PM` and durations `1 hr 5 min`, in class time.
+
+Rows are stamped `UploadedBy = LYN MEET`, and the upsert **only overwrites a
+row carrying that marker** — attendance uploaded by a centre is never replaced.
+Ad-hoc rooms (anything that is not a ScheduleID) write nothing.
+
+If MySQL was down, replay from the file:
+
+```bash
+node scripts/backfill-attendance.js 10197            # every day in that log
+node scripts/backfill-attendance.js 10197 27-08-2026 # one class-day
+node scripts/backfill-attendance.js --all --dry-run  # show, write nothing
+```
+
+Off switch: `ATTENDANCE_DB_WRITES=0`. The DB account needs INSERT and UPDATE on
+those four tables — SELECT alone is no longer enough.

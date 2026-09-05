@@ -18,6 +18,7 @@ const { attachSocketHandlers } = require("./socket");
 const { startIdleReaper } = require("./rooms/idleReaper");
 const { RECORDINGS_DIR } = require("./recording/cloudRecorder");
 const attendance = require("./attendance/attendanceLog");
+const attendanceDb = require("./attendance/attendanceDb");
 const { rooms } = require("./mediasoup/roomManager");
 const { createLogger } = require("./utils/logger");
 
@@ -393,6 +394,12 @@ async function main() {
     const resumed = require("./recording/renderQueue").resumePending();
     if (resumed) log.warn("resumed recordings left unrendered by the last shutdown", { resumed });
 
+    // Attendance and finished recordings reach the platform's own tables from
+    // here. Both are mirrors of something already on disk, so a database that
+    // is down delays them rather than losing them.
+    attendanceDb.start();
+    require("./recording/publishRecording").start();
+
     server.listen(PORT, HOST, () => {
       log.info(`backend listening on http://${HOST}:${PORT}`);
       log.info("cloud recordings directory (.mp4)", RECORDINGS_DIR);
@@ -440,11 +447,24 @@ function punchEveryoneOut(signal) {
   }
 }
 
+/**
+ * The file write inside punchEveryoneOut is synchronous and therefore already
+ * done; the database mirror of it is not. This gives those last few statements
+ * a moment to land, and gives up rather than hanging a deploy on an
+ * unreachable database -- anything missed is closed at the next boot.
+ */
+function flushMirror(ms = 3000) {
+  return Promise.race([
+    attendanceDb.flush(),
+    new Promise((resolve) => setTimeout(resolve, ms).unref()),
+  ]).catch(() => {});
+}
+
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"]) {
   process.on(signal, () => {
     log.info(`received ${signal} — closing attendance sessions`);
     punchEveryoneOut(signal);
-    process.exit(0);
+    flushMirror().finally(() => process.exit(0));
   });
 }
 
