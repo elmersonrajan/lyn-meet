@@ -23,6 +23,35 @@ function fileFor(meetingId) {
 }
 
 /**
+ * Anyone who wants to hear about attendance as it happens.
+ *
+ * The database mirror subscribes here rather than being called from the six
+ * places that record an event: a seventh way in or out of a meeting then gets
+ * its database row for free, and this file goes on knowing nothing about SQL.
+ */
+const listeners = new Set();
+
+function onEvent(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+/**
+ * Listeners run only after the line is safely on disk, and one that throws
+ * must never cost us the event -- the file is the record, the database is a
+ * copy of it.
+ */
+function notify(row) {
+  for (const fn of listeners) {
+    try {
+      fn(row);
+    } catch (err) {
+      log.error("attendance listener failed", err);
+    }
+  }
+}
+
+/**
  * Append-only so a crash mid-meeting still leaves every earlier event intact.
  * Attendance is never derived from in-memory state alone.
  */
@@ -36,6 +65,7 @@ function recordEvent(meetingId, event) {
     };
     fs.appendFileSync(fileFor(meetingId), `${JSON.stringify(row)}\n`, "utf8");
     log.info("event", { meetingId, type: row.type, name: row.name, reason: row.reason });
+    notify(row);
     return row;
   } catch (err) {
     log.error("recordEvent failed", err);
@@ -280,6 +310,9 @@ function buildReport(meetingId, { now = Date.now(), date } = {}) {
     const lastLeaveAt = leaves.length ? leaves[leaves.length - 1].leftAt : null;
     return {
       name: p.name,
+      // Never rendered in the panel: it is here so the database mirror can
+      // match a row to an account rather than to a typed name.
+      email: p.email,
       role: p.role,
       sessionCount: p.sessions.length,
       sessions: p.sessions.map((s) => ({
@@ -540,6 +573,7 @@ module.exports = {
   TIMEZONE,
   TZ_LABEL,
   safeId,
+  onEvent,
   recordEvent,
   recordJoin,
   recordLeave,

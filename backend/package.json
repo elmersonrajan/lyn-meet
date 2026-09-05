@@ -8,7 +8,7 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "check:recording": "node scripts/check-recording.js",
-    "test": "node --test test/auth.test.js"
+    "test": "node --test test/auth.test.js test/attendanceDb.test.js"
   },
   "engines": {
     "node": ">=18"
