@@ -9,6 +9,23 @@ import { emitAck } from "../services/socket";
  */
 const CAM_CONSTRAINTS = { width: 1280, height: 720 };
 
+/**
+ * Tells the server about a camera change without making the hardware wait for
+ * the answer.
+ *
+ * emitAck resolves on an acknowledgement and has no timeout, so a socket that
+ * is slow, reconnecting or gone leaves the promise pending forever. Awaiting it
+ * before stopping the track would mean a network hiccup keeps the camera --
+ * and its light -- running, which is the one thing this must never do. The
+ * device is a promise to the person sitting in front of it; the server hearing
+ * about it is bookkeeping.
+ */
+function signalVideo(event) {
+  emitAck(event, { source: "video" }).catch((err) =>
+    console.error(`[Mediasoup] ${event} failed`, err),
+  );
+}
+
 export function useMediasoup({ socket, role, peerId, enabled }) {
   const deviceRef = useRef(null);
   const sendTransportRef = useRef(null);
@@ -449,17 +466,20 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
         const withCam = new MediaStream([...audio, track]);
         applyLocalStream(withCam);
         setTeacherStream(withCam);
-        await emitAck("resume-producer", { source: "video" });
+        setCamOn(true);
+        signalVideo("resume-producer");
       } else {
-        // Paused first, so nothing more is sent while the device is still
-        // winding down.
-        await emitAck("pause-producer", { source: "video" });
+        // The device is released FIRST, before anything is said to the server.
+        // Nothing can be sent from a stopped track anyway, so pausing first
+        // bought nothing and risked everything: an acknowledgement that never
+        // came would have left the camera running.
         for (const track of localStream ? localStream.getVideoTracks() : []) track.stop();
         const audioOnly = new MediaStream(audio);
         applyLocalStream(audioOnly);
         setTeacherStream(audioOnly);
+        setCamOn(false);
+        signalVideo("pause-producer");
       }
-      setCamOn(next);
     } catch (err) {
       // Most often the camera is being held by another application, or
       // permission was withdrawn. The button must not be left claiming a
