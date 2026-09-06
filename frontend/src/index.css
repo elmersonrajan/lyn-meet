@@ -749,7 +749,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .toast {
   position: fixed;
-  bottom: 92px;
+  /* Above the meeting rather than below it. The toolbar wraps to two rows on a
+     narrow window, and a message pinned near the bottom sat on top of the very
+     buttons somebody was reaching for. */
+  top: 14px;
   left: 50%;
   transform: translateX(-50%);
   background: var(--navy-dark);

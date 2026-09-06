@@ -1,18 +1,21 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 /**
- * A video the whole class watches together, with its sound.
+ * A YouTube video the whole class watches together, with its sound.
  *
- * Every browser plays the video for itself, and the server says only WHICH
- * video and WHERE IN IT everyone should be. That is what carries the audio: a
- * clip shared as a screen arrives as silent pictures, and re-encoding it
- * through the SFU would spend a webcam's worth of bandwidth to deliver
- * something every student can already fetch at full quality. Playing locally
- * also means each student's own volume control works.
+ * Every browser plays it for itself and the server says only WHICH video and
+ * WHERE IN IT everyone should be -- YouTube's own player, fetched by each
+ * student at their own quality, with their own volume control. Streaming it
+ * through this server instead would spend a webcam's worth of bandwidth
+ * delivering something every student can already fetch directly.
  *
  * The cost of that choice is drift, so a position update is applied whenever
  * the gap is big enough to notice and ignored when it is not -- correcting a
  * third of a second would be more disruptive than the third of a second.
+ *
+ * A video that is NOT on YouTube is played by sharing the tab it is in; see
+ * startScreen in useMediasoup. That path carries the picture and the sound as
+ * live streams and has no size limit at all.
  */
 
 /** Below this, a correction would be more noticeable than the drift. */
@@ -91,7 +94,7 @@ function loadYouTubeApi() {
 function MediaHeader({ media, canControl, onStop }) {
   return (
     <div className="media-head">
-      <span className="media-kind">{media.kind === "youtube" ? "YouTube" : "Video"}</span>
+      <span className="media-kind">YouTube</span>
       <span className="media-title">{media.title}</span>
       {canControl ? (
         <button type="button" className="btn ghost small" onClick={onStop}>
@@ -118,88 +121,6 @@ function TapToPlay({ onTap }) {
       <span className="media-gesture-icon">▶</span>
       Tap to play with sound
     </button>
-  );
-}
-
-function ClipStage({ media, canControl, onControl, onStop }) {
-  const ref = useRef(null);
-  const [needsGesture, setNeedsGesture] = useState(false);
-  /**
-   * Set while the player is being moved to match the server.
-   *
-   * Seeking a video fires the same events as a person seeking it, so without
-   * this a correction sent to one browser would bounce back as a new command
-   * from the teacher's, and the two would push each other around the timeline.
-   */
-  const applying = useRef(false);
-
-  const applyState = useCallback(() => {
-    const el = ref.current;
-    if (!el) return;
-    applying.current = true;
-    try {
-      if (Math.abs(el.currentTime - media.positionSec) > DRIFT_TOLERANCE_SEC) {
-        el.currentTime = media.positionSec;
-      }
-      if (media.paused) {
-        el.pause();
-        setNeedsGesture(false);
-      } else {
-        el.play()
-          .then(() => setNeedsGesture(false))
-          .catch((err) => {
-            console.warn("[SharedMedia] autoplay refused", err.name);
-            setNeedsGesture(true);
-          });
-      }
-    } catch (err) {
-      console.error("[SharedMedia] could not apply playback state", err);
-    }
-    // Cleared on a later tick: the events the changes above provoke arrive
-    // asynchronously, and every one of them has to be recognised as ours.
-    setTimeout(() => {
-      applying.current = false;
-    }, 400);
-  }, [media.paused, media.positionSec]);
-
-  useEffect(applyState, [applyState, media.src]);
-
-  const report = (action) => {
-    if (!canControl || applying.current) return;
-    onControl({ action, positionSec: ref.current?.currentTime || 0 });
-  };
-
-  return (
-    <div className="media-stage">
-      <MediaHeader media={media} canControl={canControl} onStop={onStop} />
-      <div className="media-frame">
-        <video
-          ref={ref}
-          className="media-video"
-          src={media.src}
-          // Never muted: the sound is the point. Students get no controls, so
-          // the class cannot drift apart by everyone scrubbing their own copy.
-          controls={canControl}
-          playsInline
-          preload="auto"
-          onPlay={() => report("play")}
-          onPause={() => report("pause")}
-          onSeeked={() => report("seek")}
-          onError={() => console.error("[SharedMedia] clip failed to load", media.src)}
-        />
-        {!canControl ? <div className="media-shield" aria-hidden="true" /> : null}
-        {needsGesture ? (
-          <TapToPlay
-            onTap={() => {
-              ref.current
-                ?.play()
-                .then(() => setNeedsGesture(false))
-                .catch((err) => console.error("[SharedMedia] play failed", err));
-            }}
-          />
-        ) : null}
-      </div>
-    </div>
   );
 }
 
@@ -394,11 +315,8 @@ function YouTubeStage({ media, canControl, onControl, onStop }) {
 }
 
 export default function SharedMedia({ media, canControl, onControl, onStop }) {
-  if (!media) return null;
-  if (media.kind === "youtube") {
-    return (
-      <YouTubeStage media={media} canControl={canControl} onControl={onControl} onStop={onStop} />
-    );
-  }
-  return <ClipStage media={media} canControl={canControl} onControl={onControl} onStop={onStop} />;
+  if (!media || media.kind !== "youtube") return null;
+  return (
+    <YouTubeStage media={media} canControl={canControl} onControl={onControl} onStop={onStop} />
+  );
 }

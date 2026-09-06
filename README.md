@@ -192,35 +192,24 @@ teacher can add or switch, and switching moves the whole class: the strokes
 travel with the switch, so a tab change, a late join and a reconnect all end in
 the same picture. The recording follows whichever board the class is on.
 
-**Streaming a video live, with its sound.** Share a **browser tab** and tick
-*Share tab audio* (Chrome; on Windows a whole screen carries system sound too).
-The picture and the sound travel as two separate producers, so muting the
-teacher does not mute the video, and the recording keeps them apart. Nothing is
-uploaded, so this is the way to play something larger than the upload limit --
-or anything that is not a file at all. Firefox and Safari may give no audio
-track; the share then goes ahead silently and says so in the console.
+**Playing a video: Play Video.** It shares the browser tab the video is in,
+picture and sound together, live. Chrome's picker has an audio tickbox that is
+easy to miss and a silent video is the failure this feature exists to avoid, so
+the button says so before opening it.
 
-**Shared video, with its sound.** A clip is uploaded once (`POST /api/clips`,
-staff only) and every browser plays it from `/clips/<file>`; a YouTube link is
-reduced to its video id and played through YouTube's own player. Either way the
-server holds *what* is playing and *where it has got to*, so a student joining
-ten minutes in starts ten minutes in. Staff drive play, pause and seek; students
-watch. Hiding the controls is not enough on its own -- YouTube pauses on a click
-anywhere in the picture -- so a transparent pane over the player swallows those
-clicks, and the server refuses playback commands from anyone who is not staff.
-Nothing is muted: the audio is the point.
+Nothing is uploaded: there is no size limit, it works for a video that is not a
+file at all, and the sound is the original. The picture and the sound travel as
+two separate producers, so muting the teacher does not mute the video, and the
+recording keeps them apart. Firefox and Safari may give no audio track; the
+share then goes ahead silently and says so in the console.
 
-**If a clip upload fails**, the size limit in front of this server is the first
-thing to check — nginx defaults to `client_max_body_size 1m`, which refuses any
-real video with a 413 before the request ever reaches Node:
-
-```nginx
-client_max_body_size 320m;   # must be >= CLIP_MAX_SIZE
-```
-
-`pm2 logs lyn-backend | grep -i clip` settles where the failure is: a
-`[Clips] clip stored` line means the file arrived and the problem is elsewhere;
-silence means it was refused before it got here.
+**YouTube.** A link is reduced to its video id on the server and played through
+YouTube's own player, which every browser fetches for itself -- at its own
+quality, with its own volume control. The server holds *what* is playing and
+*where it has got to*, so a student joining ten minutes in starts ten minutes
+in. Staff drive play, pause and seek; students watch -- hiding
+YouTube's controls is not enough on its own, since its player pauses on a click
+anywhere in the picture, so a transparent pane over it swallows those clicks.
 
 A browser may refuse to start sound on its own if the viewer has not interacted
 with the page yet. When that happens the student is offered a **Tap to play with
