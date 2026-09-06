@@ -184,6 +184,33 @@ Path forms need the server to serve `index.html` for unknown paths. The Vite dev
 server does this already; behind nginx add `try_files $uri /index.html;`. The
 query form needs no server configuration at all, which is why it is the default.
 
+## Whiteboards, shared video and appreciation
+
+**Whiteboard tabs.** `Whiteboard 1 | Whiteboard 2 | +`. A new board no longer
+replaces the old one -- each keeps its own strokes for the meeting. Only the
+teacher can add or switch, and switching moves the whole class: the strokes
+travel with the switch, so a tab change, a late join and a reconnect all end in
+the same picture. The recording follows whichever board the class is on.
+
+**Shared video, with its sound.** A clip is uploaded once (`POST /api/clips`,
+staff only) and every browser plays it from `/clips/<file>`; a YouTube link is
+reduced to its video id and played through YouTube's own player. Either way the
+server holds *what* is playing and *where it has got to*, so a student joining
+ten minutes in starts ten minutes in. Staff drive play, pause and seek; students
+have no scrubber. Nothing is muted -- the audio is the point.
+
+A browser may refuse to start sound on its own if the viewer has not interacted
+with the page yet. When that happens the student is offered a **Tap to play with
+sound** button rather than a silent video.
+
+**Appreciation.** Four fixed messages (Great Job!, Excellent!, Well Done!,
+Outstanding!), staff only, thrown full-screen across every participant's screen
+for about four seconds. The wording lives on the server and the client sends
+only an id.
+
+**Ending a session** now asks first. It removes everyone from the lesson and
+cannot be undone, and the button sits beside Leave.
+
 ## Attendance
 
 In/out times and duration per person. The Attendance button is visible to the

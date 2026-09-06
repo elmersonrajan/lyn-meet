@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useUser } from "../context/UserContext.jsx";
 import { emitAck } from "../services/socket.js";
 import { useMediasoup } from "../hooks/useMediasoup.js";
@@ -8,6 +8,11 @@ import InstructorVideo from "./InstructorVideo.jsx";
 import Participants from "./Participants.jsx";
 import Toolbar from "./Toolbar.jsx";
 import Whiteboard from "./Whiteboard.jsx";
+import WhiteboardTabs from "./WhiteboardTabs.jsx";
+import SharedMedia from "./SharedMedia.jsx";
+import Appreciation from "./Appreciation.jsx";
+import ConfirmDialog from "./ConfirmDialog.jsx";
+import YouTubeDialog from "./YouTubeDialog.jsx";
 import ScreenShare from "./ScreenShare.jsx";
 import ChatPanel from "./ChatPanel.jsx";
 import RemoteAudio from "./RemoteAudio.jsx";
@@ -15,7 +20,8 @@ import RecordingStatus from "./RecordingStatus.jsx";
 import AttendancePanel from "./AttendancePanel.jsx";
 import MeetingInfo from "./MeetingInfo.jsx";
 import { syncUrlToMeeting } from "../services/meetingLink.js";
-import { IconPen, IconScreen, IconClip } from "./Icons.jsx";
+import { APPRECIATIONS } from "../services/appreciations.js";
+import { IconPen, IconScreen, IconClip, IconYouTube } from "./Icons.jsx";
 
 export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   const { session, isTeacher, isCoordinator, isStaff, setSession } = useUser();
@@ -43,8 +49,22 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   // carries on regardless.
   const [recJobs, setRecJobs] = useState(joinPayload.recordingJobs || []);
   const [toast, setToast] = useState("");
-  const [clipUrl, setClipUrl] = useState("");
   const [teacherDisconnected, setTeacherDisconnected] = useState(false);
+  // What the class is watching together, straight from the server: a clip
+  // somebody uploaded or a YouTube video, with the position everyone shares.
+  const [sharedMedia, setSharedMedia] = useState(joinPayload.media || null);
+  const [mediaBusy, setMediaBusy] = useState(false);
+  const [boards, setBoards] = useState(joinPayload.boards || []);
+  const [activeBoardId, setActiveBoardId] = useState(joinPayload.activeBoardId || null);
+  const [boardBusy, setBoardBusy] = useState(false);
+  // The praise currently on screen. One at a time: two celebrations at once
+  // would be neither.
+  const [award, setAward] = useState(null);
+  const [confirmEnd, setConfirmEnd] = useState(false);
+  const [ytOpen, setYtOpen] = useState(false);
+  const [ytError, setYtError] = useState("");
+  const [endingSession, setEndingSession] = useState(false);
+  const clipInputRef = useRef(null);
 
   const selfId = session.peer?.id;
   const handRaised = participants.some((p) => p.id === selfId && p.handRaised);
@@ -129,6 +149,25 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       if (peer.role === "teacher") setTeacherDisconnected(false);
     };
     const onStage = ({ mode }) => setStageMode(mode);
+    // The class watches what the server says is playing, wherever it has got
+    // to. All three of these carry the whole state, so a client that missed one
+    // is corrected by the next rather than drifting.
+    const onMediaShared = (payload) => {
+      setSharedMedia(payload);
+      show(payload?.kind === "youtube" ? "Playing a YouTube video" : "Playing a video");
+    };
+    const onMediaState = (payload) => setSharedMedia(payload);
+    const onMediaStopped = () => setSharedMedia(null);
+    const onBoards = ({ boards: list, activeBoardId: active }) => {
+      setBoards(list || []);
+      setActiveBoardId(active || null);
+    };
+    // The strokes travel with the switch; the board hook paints them.
+    const onBoardSwitched = ({ boards: list, activeBoardId: active }) => {
+      setBoards(list || []);
+      setActiveBoardId(active || null);
+    };
+    const onAppreciation = (payload) => setAward(payload);
     const onQuestionAsked = (question) => {
       setQuestions((prev) => [...prev.filter((q) => q.id !== question.id), question]);
       setUnreadChat((n) => n + 1);
@@ -243,6 +282,12 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     socket.on("hands-cleared", onHandsCleared);
     socket.on("reaction-changed", onReactionChanged);
     socket.on("reactions-cleared", onReactionsCleared);
+    socket.on("shared-media", onMediaShared);
+    socket.on("shared-media-state", onMediaState);
+    socket.on("shared-media-stopped", onMediaStopped);
+    socket.on("whiteboard-boards", onBoards);
+    socket.on("whiteboard-switched", onBoardSwitched);
+    socket.on("appreciation", onAppreciation);
     socket.on("recording-started", onRecStart);
     socket.on("recording-stopped", onRecStop);
     socket.on("recording-status", onRecStatus);
@@ -270,6 +315,12 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       socket.off("reaction-changed", onReactionChanged);
       socket.off("reactions-cleared", onReactionsCleared);
       socket.off("hands-cleared", onHandsCleared);
+      socket.off("shared-media", onMediaShared);
+      socket.off("shared-media-state", onMediaState);
+      socket.off("shared-media-stopped", onMediaStopped);
+      socket.off("whiteboard-boards", onBoards);
+      socket.off("whiteboard-switched", onBoardSwitched);
+      socket.off("appreciation", onAppreciation);
       socket.off("recording-started", onRecStart);
       socket.off("recording-stopped", onRecStop);
       socket.off("recording-status", onRecStatus);
@@ -394,11 +445,148 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     }
   };
 
-  const onCloseSession = async () => {
+  /**
+   * Ending the session throws the whole class out of the lesson, and the button
+   * sits beside Leave. Asking first costs a second; getting it wrong costs the
+   * rest of the lesson, because there is no way to call everyone back.
+   */
+  const onCloseSession = () => setConfirmEnd(true);
+
+  const confirmCloseSession = async () => {
+    setEndingSession(true);
     try {
       await emitAck("close-session", {});
+      setConfirmEnd(false);
     } catch (err) {
       console.error("[MeetingRoom] close session failed", err);
+      setToast(err.message);
+    } finally {
+      setEndingSession(false);
+    }
+  };
+
+  /**
+   * A clip is uploaded before it is shared.
+   *
+   * The old behaviour made a blob URL, which exists in exactly one browser:
+   * the teacher watched the video and the class watched an empty stage. Now the
+   * file goes to the server once and every browser plays it from there -- which
+   * is what gets the sound to the students, at their own volume, in their own
+   * quality.
+   */
+  const pickClip = async (e) => {
+    const file = e.target.files?.[0];
+    // Cleared immediately so choosing the same file twice still fires onChange.
+    e.target.value = "";
+    if (!file || !isStaff) return;
+    setMediaBusy(true);
+    try {
+      showToast(`Uploading ${file.name}…`);
+      const res = await fetch("/api/clips", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": file.type || "video/mp4",
+          "X-Meeting-Id": session.meetingId,
+        },
+        body: file,
+      });
+      const body = await res.json();
+      if (!res.ok || !body.ok) throw new Error(body.error || "The clip could not be uploaded");
+      await emitAck("share-media", { kind: "clip", src: body.src, title: file.name });
+    } catch (err) {
+      console.error("[MeetingRoom] clip share failed", err);
+      setToast(err.message);
+    } finally {
+      setMediaBusy(false);
+    }
+  };
+
+  /**
+   * A YouTube link, checked by the server before it reaches anybody's screen.
+   *
+   * The prompt is deliberately plain: the teacher pastes what they copied out
+   * of YouTube, in any of the shapes YouTube hands out, and the server reduces
+   * it to a video id or refuses it.
+   */
+  const shareYouTube = async (url) => {
+    if (!isStaff) return;
+    setMediaBusy(true);
+    setYtError("");
+    try {
+      await emitAck("share-media", { kind: "youtube", url });
+      setYtOpen(false);
+    } catch (err) {
+      console.error("[MeetingRoom] youtube share failed", err);
+      // Shown in the dialog rather than as a toast: the teacher is still
+      // holding the link they need to correct.
+      setYtError(err.message);
+    } finally {
+      setMediaBusy(false);
+    }
+  };
+
+  /** Play, pause and seek, from the staff player to everyone else's. */
+  const onMediaControl = async ({ action, positionSec }) => {
+    if (!isStaff) return;
+    try {
+      await emitAck("media-control", { action, positionSec });
+    } catch (err) {
+      console.error("[MeetingRoom] media control failed", err);
+    }
+  };
+
+  const stopMedia = async () => {
+    if (!isStaff) return;
+    try {
+      await emitAck("stop-media", {});
+    } catch (err) {
+      console.error("[MeetingRoom] stop media failed", err);
+      setToast(err.message);
+    }
+  };
+
+  /**
+   * A new board, with the old one kept.
+   *
+   * The server answers with the tabs and everyone is moved to the new page
+   * together, so the class never ends up looking at a board the teacher has
+   * left.
+   */
+  const addBoard = async () => {
+    if (!isTeacher || boardBusy) return;
+    setBoardBusy(true);
+    try {
+      await emitAck("whiteboard-add", {});
+      if (stageMode !== "whiteboard" && stageMode !== "draw") await setStage("whiteboard");
+    } catch (err) {
+      console.error("[MeetingRoom] add board failed", err);
+      setToast(err.message);
+    } finally {
+      setBoardBusy(false);
+    }
+  };
+
+  const selectBoard = async (boardId) => {
+    if (!isTeacher || boardBusy || boardId === activeBoardId) return;
+    setBoardBusy(true);
+    try {
+      await emitAck("whiteboard-select", { boardId });
+    } catch (err) {
+      console.error("[MeetingRoom] select board failed", err);
+      setToast(err.message);
+    } finally {
+      setBoardBusy(false);
+    }
+  };
+
+  /** Praise the class, not one screen: the server puts it on everyone's. */
+  const sendAppreciation = async (id) => {
+    if (!isStaff) return;
+    try {
+      await emitAck("appreciate", { id });
+    } catch (err) {
+      console.error("[MeetingRoom] appreciation failed", err);
       setToast(err.message);
     }
   };
@@ -424,20 +612,11 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     }
   };
 
-  const pickClip = async (e) => {
-    try {
-      if (!isStaff) return;
-      const file = e.target.files?.[0];
-      if (!file) return;
-      if (clipUrl) URL.revokeObjectURL(clipUrl);
-      const url = URL.createObjectURL(file);
-      setClipUrl(url);
-      await emitAck("set-stage", { mode: "clip" });
-      setStageMode("clip");
-    } catch (err) {
-      console.error("[MeetingRoom] pickClip failed", err);
-    }
-  };
+  // "media" is the stage mode the server sets when something is shared; a
+  // client that has the media but an older stage mode still shows it, so a
+  // missed stage-mode message cannot leave the class staring at a blank board.
+  const showMedia = Boolean(sharedMedia) && stageMode === "media";
+  const onBoard = stageMode === "whiteboard" || stageMode === "draw";
 
   const teacherPeer = participants.find((p) => p.role === "teacher");
   const teacherName = teacherPeer?.name || "Teacher";
@@ -479,21 +658,66 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
                 <IconScreen size={16} />
                 Screen
               </button>
-              <label className={stageMode === "clip" ? "active" : ""}>
+              <label className={sharedMedia?.kind === "clip" ? "active" : ""}>
                 <IconClip size={16} />
                 Video Clip
-                <input type="file" accept="video/*" hidden onChange={pickClip} />
+                <input
+                  ref={clipInputRef}
+                  type="file"
+                  accept="video/*"
+                  hidden
+                  disabled={mediaBusy}
+                  onChange={pickClip}
+                />
               </label>
+              <button
+                className={showMedia && sharedMedia?.kind === "youtube" ? "active" : ""}
+                onClick={() => {
+                  setYtError("");
+                  setYtOpen(true);
+                }}
+                disabled={mediaBusy}
+                title="Play a YouTube video for the class"
+              >
+                <IconYouTube size={16} />
+                YouTube
+              </button>
+              {/* Drawing over a video is a normal thing to do mid-lesson, and
+                  without this the only way back to it would be to share it
+                  again from the start. */}
+              {sharedMedia && !showMedia ? (
+                <button onClick={() => setStage("media")} title="Back to the video">
+                  <IconClip size={16} />
+                  Back to video
+                </button>
+              ) : null}
             </div>
           ) : null}
+          {onBoard ? (
+            <WhiteboardTabs
+              boards={boards}
+              activeId={activeBoardId}
+              canEdit={isTeacher}
+              busy={boardBusy}
+              onSelect={selectBoard}
+              onAdd={addBoard}
+            />
+          ) : null}
           <div className="stage-canvas">
-            <div style={{ display: stageMode === "whiteboard" || stageMode === "draw" ? "block" : "none", width: "100%", height: "100%" }}>
+            <div style={{ display: onBoard ? "block" : "none", width: "100%", height: "100%" }}>
               <Whiteboard board={board} />
             </div>
             {stageMode === "screen" && media.screenStream ? (
               <ScreenShare stream={media.screenStream} />
-            ) : stageMode === "clip" && clipUrl ? (
-              <video className="clip" src={clipUrl} controls autoPlay />
+            ) : showMedia ? (
+              <SharedMedia
+                media={sharedMedia}
+                // Staff drive; everyone else follows. A student with a scrubber
+                // is a class that has stopped watching the same thing.
+                canControl={isStaff}
+                onControl={onMediaControl}
+                onStop={stopMedia}
+              />
             ) : null}
           </div>
         </div>
@@ -542,6 +766,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         onMuteOthers={onMuteOthers}
         onToggleRecord={onToggleRecord}
         onCloseSession={onCloseSession}
+        appreciations={APPRECIATIONS}
+        onAppreciate={sendAppreciation}
         onOpenPolls={() => {
           setChatTab("poll");
           setChatOpen(true);
@@ -585,6 +811,29 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         onError={showToast}
       />
       {toast ? <div className="toast">{toast}</div> : null}
+
+      {/* Above everything, briefly, for everyone in the room. */}
+      <Appreciation award={award} onDone={() => setAward(null)} />
+
+      <YouTubeDialog
+        open={ytOpen && isStaff}
+        busy={mediaBusy}
+        error={ytError}
+        onPlay={shareYouTube}
+        onCancel={() => setYtOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={confirmEnd}
+        title="End the meeting for everyone?"
+        message="Every participant will be removed from the meeting and the session will be closed. This cannot be undone."
+        confirmLabel="End Meeting"
+        cancelLabel="Cancel"
+        danger
+        busy={endingSession}
+        onConfirm={confirmCloseSession}
+        onCancel={() => setConfirmEnd(false)}
+      />
     </div>
   );
 }
