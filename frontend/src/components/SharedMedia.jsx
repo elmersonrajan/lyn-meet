@@ -187,6 +187,7 @@ function ClipStage({ media, canControl, onControl, onStop }) {
           onSeeked={() => report("seek")}
           onError={() => console.error("[SharedMedia] clip failed to load", media.src)}
         />
+        {!canControl ? <div className="media-shield" aria-hidden="true" /> : null}
         {needsGesture ? (
           <TapToPlay
             onTap={() => {
@@ -356,6 +357,17 @@ function YouTubeStage({ media, canControl, onControl, onStop }) {
         {/* Kept mounted even while an error shows: tearing the host out from
             under a player that may still be loading turns one failure into two. */}
         <div className="media-youtube" ref={hostRef} hidden={Boolean(error)} />
+        {/*
+          A student watches; they do not drive.
+
+          Hiding the controls is not enough on its own -- YouTube's player
+          pauses on a plain click anywhere in the picture, and a class where
+          forty people can each pause their own copy is a class that is no
+          longer watching the same thing. This pane sits over the player and
+          swallows the clicks. It is not a permission check: the server refuses
+          playback commands from anyone who is not staff.
+        */}
+        {!canControl && !error ? <div className="media-shield" aria-hidden="true" /> : null}
         {error ? (
           <div className="media-error">
             <p>{error}</p>

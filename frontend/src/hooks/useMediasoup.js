@@ -134,6 +134,19 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
           setScreenStream(new MediaStream(screenStreamRef.current.getTracks()));
           return;
         }
+        /**
+         * The sound of a shared screen.
+         *
+         * Checked before the teacher-audio branch below, which would otherwise
+         * put it in the instructor tile and throw the teacher's microphone out
+         * to make room -- the class would hear the video and lose the teacher.
+         * It plays through the same sinks as everyone else's audio.
+         */
+        if (source === "screen-audio") {
+          remoteAudioRef.current.set(producer.producerId, new MediaStream([track]));
+          publishRemoteAudio();
+          return;
+        }
         if (track.kind === "video") {
           setTeacherTrack(track, producer?.producerId);
           return;
@@ -490,13 +503,60 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
     }
   }, [camOn, localStream, role, applyLocalStream]);
 
+  /**
+   * Ends both halves of a screen share.
+   *
+   * The picture and the sound are two producers, and stopping the share from
+   * the browser's own bar ends only the track it owns -- without this, the
+   * class would go on hearing a video whose picture had gone.
+   */
+  const stopScreenProducers = useCallback(async () => {
+    for (const source of ["screen", "screen-audio"]) {
+      const producer = producersRef.current[source];
+      if (!producer) continue;
+      try {
+        await emitAck("close-producer", { source });
+      } catch (err) {
+        console.error(`[Mediasoup] close ${source} failed`, err);
+      }
+      try {
+        producer.close();
+      } catch (err) {
+        console.error(`[Mediasoup] closing the ${source} producer failed`, err);
+      }
+      producersRef.current[source] = null;
+    }
+    releaseStream(localScreenRef.current);
+    localScreenRef.current = null;
+  }, [releaseStream]);
+
+  /**
+   * Shares a screen, and the sound coming out of it.
+   *
+   * This is how a video gets played to a class without uploading it anywhere:
+   * whatever is playing on the teacher's machine is streamed live, picture and
+   * sound together, in step by construction. Chrome offers the audio when a
+   * browser TAB is chosen (and system sound on Windows for a whole screen); on
+   * Firefox and Safari there may be no audio track at all, which is why its
+   * absence is a log line rather than an error.
+   *
+   * The sound travels as its own producer rather than being mixed into the
+   * teacher's microphone, so muting the teacher does not mute the video and the
+   * recording can keep them apart.
+   */
   const startScreen = useCallback(async () => {
     try {
       if (role !== "teacher" && role !== "coordinator") throw new Error("Only teacher or coordinator can share screen");
       console.log("[Mediasoup] startScreen");
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
-        audio: false,
+        // Asked for every time. A browser that will not give it simply returns
+        // no audio track, and the share goes ahead silently rather than failing.
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
       });
       const track = stream.getVideoTracks()[0];
       const producer = await sendTransportRef.current.produce({
@@ -505,12 +565,26 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
       });
       producersRef.current.screen = producer;
       localScreenRef.current = stream;
+
+      const audioTrack = stream.getAudioTracks()[0];
+      if (audioTrack) {
+        producersRef.current["screen-audio"] = await sendTransportRef.current.produce({
+          track: audioTrack,
+          appData: { source: "screen-audio" },
+        });
+        console.log("[Mediasoup] sharing screen WITH sound");
+      } else {
+        console.warn(
+          "[Mediasoup] the screen was shared without sound — pick a browser tab and tick 'Share tab audio'",
+        );
+      }
+
       setScreenStream(stream);
       setSharing(true);
+      // Stopping from the browser's own bar ends both halves of the share.
       track.onended = async () => {
         try {
-          await emitAck("close-producer", { source: "screen" });
-          producer.close();
+          await stopScreenProducers();
           setSharing(false);
           setScreenStream(null);
         } catch (err) {
@@ -521,20 +595,21 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
       console.error("[Mediasoup] startScreen failed", err);
       throw err;
     }
+    // stopScreenProducers is stable; role is the only thing that decides
+    // whether this is allowed to run at all.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role]);
 
   const stopScreen = useCallback(async () => {
     try {
       console.log("[Mediasoup] stopScreen");
-      await emitAck("close-producer", { source: "screen" });
-      producersRef.current.screen?.close();
-      screenStream?.getTracks().forEach((t) => t.stop());
+      await stopScreenProducers();
       setSharing(false);
       setScreenStream(null);
     } catch (err) {
       console.error("[Mediasoup] stopScreen failed", err);
     }
-  }, [screenStream]);
+  }, [stopScreenProducers]);
 
   /**
    * Everything read from a ref, and no dependencies.
