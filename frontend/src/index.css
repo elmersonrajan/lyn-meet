@@ -1935,6 +1935,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  /* Never shrink. A flex child shrinks by default, so from the fourth board on
+     the tabs were squeezed to nothing instead of the row scrolling -- the bar
+     was there the whole time with tabs a few pixels wide. */
+  flex: 0 0 auto;
   padding: 7px 14px;
   border: 1px solid var(--border);
   border-bottom: none;
@@ -1972,6 +1976,18 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   font-size: 16px;
   line-height: 1;
   color: var(--line);
+  /* Pinned to the end of the visible row, so "new whiteboard" stays reachable
+     once there are more tabs than fit. */
+  position: sticky;
+  right: 0;
+  box-shadow: -8px 0 8px -6px rgba(16, 42, 80, 0.18);
+}
+
+/* A long row is scrolled, not crushed. */
+.board-tabs::-webkit-scrollbar { height: 6px; }
+.board-tabs::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2044,11 +2060,30 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .media-error {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
   color: #fff;
   font-size: 14px;
+  line-height: 1.5;
 }
+
+.media-error p { margin: 0; max-width: 42ch; }
+
+.media-external {
+  color: #fff;
+  font-weight: 600;
+  padding: 8px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 8px;
+  text-decoration: none;
+}
+
+.media-external:hover { background: rgba(255, 255, 255, 0.12); }
 
 /* Offered only when the browser refuses to start the sound on its own. It
    covers the video because tapping anywhere is the point. */
