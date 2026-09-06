@@ -56,6 +56,14 @@ export default function Toolbar({
 
   return (
     <div className="toolbar">
+      {/*
+        Four groups, in the order somebody reaches for them: what you are doing,
+        what the class is doing, praise, and ending. Fourteen controls in one
+        undifferentiated row is a row nobody can find anything in -- and when it
+        wrapped, "Leave" ended up alone on a line of its own looking like a
+        mistake.
+      */}
+      <div className="tgroup" role="group" aria-label="Your controls">
       {isTeacher ? (
         <button
           className={`tbtn ${camOn ? "on" : ""}`}
@@ -95,20 +103,6 @@ export default function Toolbar({
         {handRaised ? "Lower Hand" : "Raise Hand"}
       </button>
 
-      {staff && raisedCount > 0 ? (
-        <button
-          className="tbtn attn"
-          onClick={onLowerAllHands}
-          title={`Lower all ${raisedCount} raised hand(s)`}
-        >
-          <span className="ico">
-            <IconHandLower />
-          </span>
-          Lower All
-          <span className="badge">{raisedCount > 9 ? "9+" : raisedCount}</span>
-        </button>
-      ) : null}
-
       {/* Students only. The reaction answers "is the class following me", so
           staff pressing it would be answering their own question. They see the
           counts in the participants panel and on Clear Reactions instead.
@@ -146,6 +140,22 @@ export default function Toolbar({
       </button>
       </>
       ) : null}
+      </div>
+
+      <div className="tgroup" role="group" aria-label="The class">
+      {staff && raisedCount > 0 ? (
+        <button
+          className="tbtn attn"
+          onClick={onLowerAllHands}
+          title={`Lower all ${raisedCount} raised hand(s)`}
+        >
+          <span className="ico">
+            <IconHandLower />
+          </span>
+          Lower All
+          <span className="badge">{raisedCount > 9 ? "9+" : raisedCount}</span>
+        </button>
+      ) : null}
 
       {/* Always present for staff, not only once someone has reacted. A
           control that appears and disappears is a control nobody can find when
@@ -173,49 +183,12 @@ export default function Toolbar({
       ) : null}
 
       {staff ? (
-        <>
-          <button className="tbtn" onClick={onMuteOthers} title="Mute all students">
-            <span className="ico">
-              <IconMuteAll />
-            </span>
-            Mute All
-          </button>
-
-          <button
-            className={`tbtn ${recording ? "live" : ""}`}
-            onClick={onToggleRecord}
-            disabled={recBusy}
-            title={recording ? "Stop cloud recording" : "Start cloud recording"}
-          >
-            <span className="ico">{recording ? <IconStopRecord /> : <IconRecord />}</span>
-            {recording ? "Stop Rec" : "Record"}
-          </button>
-
-          {/*
-            Praise, and the one thing on this toolbar that is for the class
-            rather than for running it. Grouped so it reads as one control with
-            four choices instead of four more buttons in a long row.
-          */}
-          <div className="praise-group" role="group" aria-label="Appreciate a student">
-            <span className="praise-label">
-              <IconStar size={16} />
-            </span>
-            {(appreciations || []).map((award) => (
-              <button
-                key={award.id}
-                type="button"
-                className="tbtn praise"
-                onClick={() => onAppreciate?.(award.id)}
-                title={`Show "${award.message}" to everyone`}
-              >
-                <span className="praise-emoji" aria-hidden="true">
-                  {award.emoji}
-                </span>
-                {award.message}
-              </button>
-            ))}
-          </div>
-        </>
+        <button className="tbtn" onClick={onMuteOthers} title="Mute all students">
+          <span className="ico">
+            <IconMuteAll />
+          </span>
+          Mute All
+        </button>
       ) : null}
 
       {/* Attendance is a coordinator responsibility, not the teacher's. */}
@@ -255,24 +228,69 @@ export default function Toolbar({
         Q&amp;A
         {unreadChat ? <span className="badge">{unreadChat > 9 ? "9+" : unreadChat}</span> : null}
       </button>
+      </div>
+
+      {/*
+        Praise is the one thing on this toolbar that is for the class rather
+        than for running it, so it gets its own group and its own colour
+        instead of four more grey buttons in the row.
+      */}
+      {staff ? (
+        <div className="tgroup praise" role="group" aria-label="Appreciate a student">
+          <span className="tgroup-label">
+            <IconStar size={14} />
+            Praise
+          </span>
+          {(appreciations || []).map((award) => (
+            <button
+              key={award.id}
+              type="button"
+              className="tbtn praise"
+              onClick={() => onAppreciate?.(award.id)}
+              title={`Show "${award.message}" to everyone`}
+            >
+              <span className="praise-emoji" aria-hidden="true">
+                {award.emoji}
+              </span>
+              {award.message}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <span className="tspacer" />
 
-      {staff ? (
-        <button className="tbtn danger" onClick={onCloseSession} title="End the meeting for everyone">
-          <span className="ico">
-            <IconEndSession />
-          </span>
-          End Session
-        </button>
-      ) : null}
+      {/* Recording and the two ways out, kept together at the end and away
+          from everything pressed by accident. */}
+      <div className="tgroup end" role="group" aria-label="Recording and leaving">
+        {staff ? (
+          <button
+            className={`tbtn ${recording ? "live" : ""}`}
+            onClick={onToggleRecord}
+            disabled={recBusy}
+            title={recording ? "Stop cloud recording" : "Start cloud recording"}
+          >
+            <span className="ico">{recording ? <IconStopRecord /> : <IconRecord />}</span>
+            {recording ? "Stop Rec" : "Record"}
+          </button>
+        ) : null}
 
-      <button className="tbtn danger" onClick={onLeave} title="Leave the meeting">
-        <span className="ico">
-          <IconLeave />
-        </span>
-        Leave
-      </button>
+        {staff ? (
+          <button className="tbtn danger" onClick={onCloseSession} title="End the meeting for everyone">
+            <span className="ico">
+              <IconEndSession />
+            </span>
+            End Session
+          </button>
+        ) : null}
+
+        <button className="tbtn danger" onClick={onLeave} title="Leave the meeting">
+          <span className="ico">
+            <IconLeave />
+          </span>
+          Leave
+        </button>
+      </div>
     </div>
   );
 }
