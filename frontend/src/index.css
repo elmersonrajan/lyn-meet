@@ -2351,3 +2351,21 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 
 .yt-hint.bad { color: var(--danger); }
+
+/* A clip on its way up. The control the teacher pressed is where they are
+   looking, so that is where the progress goes. */
+.stage-tools label.busy {
+  background: var(--tint-strong);
+  color: var(--line);
+  cursor: progress;
+}
+
+/* Over the player, for anyone who is only watching. YouTube pauses on a click
+   anywhere in the picture even with its controls hidden, and forty people each
+   pausing their own copy is forty people no longer watching the same thing. */
+.media-shield {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  cursor: default;
+}

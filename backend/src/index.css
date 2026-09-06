@@ -1,0 +1,8 @@
+
+/* A clip on its way up. The control the teacher pressed is where they are
+   looking, so that is where the progress goes. */
+.stage-tools label.busy {
+  background: var(--tint-strong);
+  color: var(--line);
+  cursor: progress;
+}

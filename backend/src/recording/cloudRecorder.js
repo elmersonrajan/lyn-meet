@@ -298,7 +298,12 @@ class CloudRecorder {
    * server clock, so the gap between the two start moments is all the renderer
    * needs to put it back in the right place.
    */
-  async _startSide({ producer, peer, kind }) {
+  /**
+   * @param {{producer, peer, kind, screen?: boolean}} opts `screen` marks audio
+   *   that belongs to a shared screen rather than to a person, so it is not
+   *   mistaken for their voice when deciding what is already being captured.
+   */
+  async _startSide({ producer, peer, kind, screen = false }) {
     const index = this.sides.length;
     const port = pickPort();
     const transport = await this.room.router.createPlainTransport({
@@ -376,6 +381,7 @@ class CloudRecorder {
 
     const side = {
       kind,
+      screen,
       path: outPath,
       sdpPath,
       proc,
@@ -410,7 +416,9 @@ class CloudRecorder {
       if (!this.active || !peer || peer.disconnected) return null;
       const teacher = this.room.getTeacher();
       if (teacher && peer.id === teacher.id) return null;
-      if (this.sides.some((s) => s.kind === "audio" && s.peerId === peer.id)) return null;
+      if (this.sides.some((s) => s.kind === "audio" && s.peerId === peer.id && !s.screen)) {
+        return null;
+      }
       if (this.sides.length >= MAX_SIDES) {
         log.warn("voice not recorded — too many side captures already", {
           name: peer.name,
@@ -423,6 +431,36 @@ class CloudRecorder {
       return await this._startSide({ producer, peer, kind: "audio" });
     } catch (err) {
       log.error("addVoice failed — recording continues without that voice", err);
+      return null;
+    }
+  }
+
+  /**
+   * The sound coming from a shared screen.
+   *
+   * Captured as another audio side, exactly as a voice is, so the mixer needs
+   * to know nothing new about it. Without this a class where the teacher
+   * played a video would record the picture and none of the sound.
+   */
+  async addScreenAudio(peer) {
+    try {
+      if (!this.active || !peer) return null;
+      if (this.sides.some((s) => s.kind === "audio" && s.peerId === peer.id && s.screen)) {
+        return null;
+      }
+      if (this.sides.length >= MAX_SIDES) {
+        log.warn("screen audio not recorded — too many side captures already", {
+          name: peer.name,
+          max: MAX_SIDES,
+        });
+        return null;
+      }
+      const producer = this.room.findProducer(peer.id, "screen-audio");
+      if (!producer) return null;
+      log.action("capturing the sound of a shared screen", { who: peer.name });
+      return await this._startSide({ producer, peer, kind: "audio", screen: true });
+    } catch (err) {
+      log.error("addScreenAudio failed — recording continues without it", err);
       return null;
     }
   }
@@ -490,6 +528,10 @@ class CloudRecorder {
       // Voices are picked up when somebody unmutes, not here: a producer is
       // created muted.
       if (source === "screen") await this.addScreen(peer);
+      // The sound belonging to a shared screen, on the other hand, arrives
+      // live: a recording of a lesson where a video was played to the class
+      // should not be a recording of a silent video.
+      if (source === "screen-audio") await this.addScreenAudio(peer);
     } catch (err) {
       log.error("onProducerAdded failed — recording continues", err);
     }
@@ -721,10 +763,14 @@ class CloudRecorder {
       hasAudio: this.hasAudio,
       sides: this.sides.map((s) => ({
         kind: s.kind,
+        // Sound belonging to a shared screen rather than to a person, so the
+        // finished recording does not list a video's soundtrack as somebody's
+        // voice.
+        screen: s.screen,
         path: s.path,
         sdpPath: s.sdpPath,
         offsetMs: s.offsetMs,
-        name: s.name,
+        name: s.screen ? `${s.name} (screen)` : s.name,
         role: s.role,
       })),
       whiteboard: this.room.whiteboard || [],

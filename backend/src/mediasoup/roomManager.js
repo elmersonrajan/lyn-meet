@@ -320,7 +320,13 @@ class Room {
       // An unrecognised source would be published under a name nothing looks
       // for: never consumed, never recorded, and -- because replacement is by
       // source -- capable of closing the wrong producer on its way in.
-      if (!["audio", "video", "screen"].includes(source)) {
+      // Sharing a screen with its sound publishes a second track, and it is
+      // staff-only for the same reason the picture is: a student publishing
+      // "screen-audio" would be piping their machine into the lesson.
+      if (peer.role === "student" && source === "screen-audio") {
+        throw new Error("Only staff can share sound from their screen");
+      }
+      if (!["audio", "video", "screen", "screen-audio"].includes(source)) {
         throw new Error(`Unknown producer source "${source}"`);
       }
       log.action("produce", { peerId: peer.id, kind, source, role: peer.role });
