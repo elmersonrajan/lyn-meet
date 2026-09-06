@@ -17,6 +17,7 @@ import {
   IconThumbUp,
   IconThumbDown,
   IconTrash,
+  IconStar,
 } from "./Icons.jsx";
 
 export default function Toolbar({
@@ -39,6 +40,8 @@ export default function Toolbar({
   onMuteOthers,
   onToggleRecord,
   onCloseSession,
+  appreciations,
+  onAppreciate,
   onOpenPolls,
   onOpenChat,
   onOpenAttendance,
@@ -188,6 +191,30 @@ export default function Toolbar({
             {recording ? "Stop Rec" : "Record"}
           </button>
 
+          {/*
+            Praise, and the one thing on this toolbar that is for the class
+            rather than for running it. Grouped so it reads as one control with
+            four choices instead of four more buttons in a long row.
+          */}
+          <div className="praise-group" role="group" aria-label="Appreciate a student">
+            <span className="praise-label">
+              <IconStar size={16} />
+            </span>
+            {(appreciations || []).map((award) => (
+              <button
+                key={award.id}
+                type="button"
+                className="tbtn praise"
+                onClick={() => onAppreciate?.(award.id)}
+                title={`Show "${award.message}" to everyone`}
+              >
+                <span className="praise-emoji" aria-hidden="true">
+                  {award.emoji}
+                </span>
+                {award.message}
+              </button>
+            ))}
+          </div>
         </>
       ) : null}
 

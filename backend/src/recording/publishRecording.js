@@ -99,6 +99,46 @@ async function publish({ meetingId, file }) {
   return result.insertId;
 }
 
+/**
+ * Publishes every finished recording that has no row yet.
+ *
+ * The live listener only hears renders that complete while this process is
+ * running and subscribed. Anything that finished before the feature existed,
+ * while the database was unreachable, or while the process was down, would
+ * otherwise sit on disk as a file nobody on the platform knows about -- which
+ * is exactly the state the recordings were found in.
+ *
+ * The job files are the record of what was rendered, so they are what this
+ * reconciles against. Publishing is idempotent, so a sweep that runs on every
+ * boot costs one query per finished recording and changes nothing it has
+ * already done.
+ */
+async function sweep() {
+  if (!config.enabled || !process.env.DB_HOST) return 0;
+  const jobs = renderQueue
+    .listJobs()
+    .filter((job) => job.status === renderQueue.STATUS.COMPLETED && job.file);
+  let published = 0;
+  for (const job of jobs) {
+    try {
+      const before = await query(
+        "SELECT VideoID FROM YouTubeRecords WHERE ScheduleID = ? AND VideoURL = ? LIMIT 1",
+        [scheduleIdOf(job.meetingId), urlFor(job.file)],
+      );
+      if (before.length) continue;
+      const videoId = await publish({ meetingId: job.meetingId, file: job.file });
+      if (videoId) published += 1;
+    } catch (err) {
+      log.error("could not publish a finished recording", {
+        meetingId: job.meetingId,
+        file: job.file,
+        error: err.message,
+      });
+    }
+  }
+  return published;
+}
+
 let started = false;
 
 /** Subscribes to the render queue. Called once, at boot. */
@@ -130,4 +170,4 @@ function start() {
   return true;
 }
 
-module.exports = { start, publish, urlFor, scheduleIdOf, config };
+module.exports = { start, sweep, publish, urlFor, scheduleIdOf, config };

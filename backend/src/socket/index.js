@@ -12,6 +12,12 @@ const {
 const { createLogger } = require("../utils/logger");
 const meetingLog = require("../utils/meetingLog");
 const attendance = require("../attendance/attendanceLog");
+const {
+  APPRECIATIONS,
+  buildMedia,
+  mediaPublic,
+  boardsPublic,
+} = require("./sharedStage");
 const renderQueue = require("../recording/renderQueue");
 const enrolment = require("../auth/enrolment");
 
@@ -164,6 +170,11 @@ function joinAck(room, peer, extra = {}) {
     questions: room.questions.map((q) => questionPublic(q, peer)),
     polls: room.polls.map((p) => pollPublic(p, peer.id)),
     whiteboard: room.whiteboard,
+    boards: room.boardTabs(),
+    activeBoardId: room.activeBoardId,
+    // Someone joining halfway through a clip arrives at the same point in the
+    // same video as everybody else, rather than at a blank stage.
+    media: mediaPublic(room),
     recording: room.recorder ? room.recorder.snapshot() : null,
     // Anything for this meeting still being built, so somebody joining or
     // reloading sees where it got to rather than nothing at all.
@@ -648,7 +659,7 @@ function attachSocketHandlers(io) {
         if (room.whiteboard.length > 4000) {
           room.whiteboard.splice(0, room.whiteboard.length - 4000);
         }
-        socket.to(room.id).emit("whiteboard-stroke", stroke);
+        socket.to(room.id).emit("whiteboard-stroke", { ...stroke, boardId: room.activeBoardId });
         callback?.({ ok: true });
       } catch (err) {
         log.error("whiteboard-stroke failed", err);
@@ -663,10 +674,157 @@ function attachSocketHandlers(io) {
         // Clearing is drawing — same restriction as strokes.
         requireTeacher(peer);
         room.whiteboard = [];
-        io.to(room.id).emit("whiteboard-clear");
+        io.to(room.id).emit("whiteboard-clear", { boardId: room.activeBoardId });
         ack(callback, { ok: true });
       } catch (err) {
         log.error("whiteboard-clear failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    /**
+     * A new page, not a new board.
+     *
+     * Creating one used to wipe what was there. Now every board is kept for
+     * the life of the meeting and the class follows whichever the teacher is
+     * on -- a tab that only the teacher could see would be worse than no tabs
+     * at all, because the class would be looking at work that had silently
+     * moved.
+     */
+    socket.on("whiteboard-add", (_payload, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        requireTeacher(peer);
+        const board = room.addBoard();
+        log.action("whiteboard-add", { roomId: room.id, boardId: board.id, count: room.boards.length });
+        io.to(room.id).emit("whiteboard-switched", {
+          ...boardsPublic(room),
+          strokes: board.strokes,
+        });
+        ack(callback, { ok: true, boardId: board.id });
+      } catch (err) {
+        log.error("whiteboard-add failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    /**
+     * The switch carries the strokes with it.
+     *
+     * A client is never asked to remember boards it is not looking at: what it
+     * is handed is exactly what the server holds for the page it is being moved
+     * to, so a reconnect, a late join and a tab switch all end in the same
+     * picture.
+     */
+    socket.on("whiteboard-select", ({ boardId }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        requireTeacher(peer);
+        const board = room.selectBoard(boardId);
+        log.action("whiteboard-select", { roomId: room.id, boardId: board.id });
+        io.to(room.id).emit("whiteboard-switched", {
+          ...boardsPublic(room),
+          strokes: board.strokes,
+        });
+        ack(callback, { ok: true });
+      } catch (err) {
+        log.error("whiteboard-select failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    /**
+     * Play something to the class -- an uploaded clip, or a YouTube video.
+     *
+     * The room holds what is playing and roughly where it has got to, and each
+     * browser plays it for itself. That is what carries the sound: a clip
+     * screen-shared would arrive as silent video, whereas a file every student
+     * plays locally arrives with its own audio, in their own quality, and can
+     * be seeked to the same place for everybody.
+     */
+    socket.on("share-media", (payload, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        requireStaff(peer);
+        room.media = buildMedia(payload);
+        room.stageMode = "media";
+        log.action("share-media", { roomId: room.id, kind: room.media.kind, title: room.media.title });
+        io.to(room.id).emit("stage-mode", { mode: room.stageMode });
+        io.to(room.id).emit("shared-media", mediaPublic(room));
+        ack(callback, { ok: true, media: mediaPublic(room) });
+      } catch (err) {
+        log.error("share-media failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    /**
+     * Play, pause and seek, from staff to everyone.
+     *
+     * The position is stored with the moment it was reported, so a student who
+     * arrives later can be told where the video is NOW rather than where it was
+     * when the teacher last touched it.
+     */
+    socket.on("media-control", ({ action, positionSec }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        requireStaff(peer);
+        if (!room.media) throw new Error("Nothing is being played");
+        const position = Number.isFinite(Number(positionSec))
+          ? Math.max(0, Number(positionSec))
+          : room.media.positionSec;
+        if (action === "play") room.media.paused = false;
+        else if (action === "pause") room.media.paused = true;
+        else if (action !== "seek") throw new Error("Unknown playback action");
+        room.media.positionSec = position;
+        room.media.updatedAt = Date.now();
+        io.to(room.id).emit("shared-media-state", mediaPublic(room));
+        ack(callback, { ok: true });
+      } catch (err) {
+        log.error("media-control failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    socket.on("stop-media", (_payload, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        requireStaff(peer);
+        room.media = null;
+        room.stageMode = "whiteboard";
+        io.to(room.id).emit("shared-media-stopped", {});
+        io.to(room.id).emit("stage-mode", { mode: room.stageMode });
+        ack(callback, { ok: true });
+      } catch (err) {
+        log.error("stop-media failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    /**
+     * Praise, thrown on everybody's screen at once.
+     *
+     * The wording is chosen here rather than accepted from the client: this is
+     * broadcast to a class of children, and a field that arrives as text is a
+     * field that can arrive as anything.
+     */
+    socket.on("appreciate", ({ id }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        requireStaff(peer);
+        const award = APPRECIATIONS.find((a) => a.id === id);
+        if (!award) throw new Error("Unknown appreciation");
+        log.action("appreciate", { roomId: room.id, id: award.id, by: peer.name });
+        io.to(room.id).emit("appreciation", { ...award, by: peer.name, at: Date.now() });
+        ack(callback, { ok: true });
+      } catch (err) {
+        log.error("appreciate failed", err);
         ack(callback, { ok: false, error: err.message });
       }
     });

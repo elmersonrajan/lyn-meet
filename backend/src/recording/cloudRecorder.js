@@ -577,7 +577,11 @@ class CloudRecorder {
    */
   _boardSignature() {
     const strokes = this.room.whiteboard || [];
-    return `${strokes.length}:${strokes[strokes.length - 1]?.at || 0}`;
+    // The board id is part of it because a class can now be moved between
+    // boards mid-lesson: two pages that happen to hold the same number of
+    // strokes are still two different pictures, and the recording has to show
+    // whichever one the class was actually looking at.
+    return `${this.room.activeBoardId}:${strokes.length}:${strokes[strokes.length - 1]?.at || 0}`;
   }
 
   /**

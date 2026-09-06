@@ -29,6 +29,14 @@ function onSpeaking(fn) {
 
 const ROLES = new Set(["teacher", "student", "coordinator"]);
 
+/**
+ * Boards are held for the whole meeting and each one is capped at 4000 strokes,
+ * so this is the ceiling on what a room can accumulate. High enough that no
+ * teacher will meet it in a lesson, low enough that a stuck client cannot grow
+ * a room without limit.
+ */
+const MAX_BOARDS = 20;
+
 function normalizeRole(role) {
   const r = String(role || "student").toLowerCase();
   if (r === "co-ordinator" || r === "co_ordinator" || r === "admin") return "coordinator";
@@ -93,9 +101,72 @@ class Room {
     // Questions put to the class by staff. Each carries its own answers, which
     // only staff are ever sent — see questionPublic in the socket layer.
     this.questions = [];
-    this.whiteboard = [];
+    /**
+     * Boards, in the order their tabs appear, never fewer than one.
+     *
+     * A new board used to replace the old one, so a teacher who wanted a clean
+     * page lost the working they had just done with the class. Each board keeps
+     * its own strokes for the life of the meeting, and only ONE is live at a
+     * time -- the class watches whichever the teacher is on, which is what
+     * makes a tab switch meaningful rather than a private view.
+     */
+    this.boards = [{ id: "b1", name: "Whiteboard 1", strokes: [] }];
+    this.activeBoardId = "b1";
+    this.boardSeq = 1;
     this.polls = [];
     this.stageMode = "whiteboard";
+    /**
+     * The video everyone is watching together, or null.
+     *
+     * Held on the room rather than in each browser so that a student who joins
+     * halfway through a clip arrives at the same point in the same video as
+     * everybody else.
+     */
+    this.media = null;
+  }
+
+  /**
+   * The live board's strokes.
+   *
+   * Kept as a property name the rest of the app already knows -- the recorder
+   * composes `room.whiteboard` into the video, and it should go on recording
+   * whatever the class is actually looking at without knowing tabs exist.
+   */
+  get whiteboard() {
+    return this.activeBoard().strokes;
+  }
+
+  set whiteboard(strokes) {
+    this.activeBoard().strokes = strokes || [];
+  }
+
+  activeBoard() {
+    return (
+      this.boards.find((b) => b.id === this.activeBoardId) || this.boards[0]
+    );
+  }
+
+  /** Tabs, without the strokes: what the bar along the top is drawn from. */
+  boardTabs() {
+    return this.boards.map((b) => ({ id: b.id, name: b.name, strokeCount: b.strokes.length }));
+  }
+
+  addBoard() {
+    if (this.boards.length >= MAX_BOARDS) {
+      throw new Error(`A meeting can hold ${MAX_BOARDS} whiteboards`);
+    }
+    this.boardSeq += 1;
+    const board = { id: `b${this.boardSeq}`, name: `Whiteboard ${this.boards.length + 1}`, strokes: [] };
+    this.boards.push(board);
+    this.activeBoardId = board.id;
+    return board;
+  }
+
+  selectBoard(boardId) {
+    const board = this.boards.find((b) => b.id === boardId);
+    if (!board) throw new Error("No such whiteboard");
+    this.activeBoardId = board.id;
+    return board;
   }
 
   hasLiveStaff() {

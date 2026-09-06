@@ -184,11 +184,31 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
         console.error("[Whiteboard] remote clear failed", err);
       }
     };
+    /**
+     * The teacher moved the class to another board.
+     *
+     * The strokes arrive with the switch rather than being remembered here:
+     * what this browser paints is then exactly what the server holds for the
+     * page everyone was just moved to, which makes a tab switch, a late join
+     * and a reconnect all end in the same picture.
+     */
+    const onSwitched = ({ strokes }) => {
+      try {
+        console.log("[Whiteboard] board switched", { strokes: strokes?.length || 0 });
+        strokesRef.current = Array.isArray(strokes) ? [...strokes] : [];
+        redraw();
+      } catch (err) {
+        console.error("[Whiteboard] board switch failed", err);
+      }
+    };
+
     socket.on("whiteboard-stroke", onStroke);
     socket.on("whiteboard-clear", onClear);
+    socket.on("whiteboard-switched", onSwitched);
     return () => {
       socket.off("whiteboard-stroke", onStroke);
       socket.off("whiteboard-clear", onClear);
+      socket.off("whiteboard-switched", onSwitched);
     };
   }, [socket, redraw]);
 
