@@ -2043,6 +2043,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   min-height: 0;
 }
 
+/* `hidden` sets display:none in the user-agent sheet, which a display rule of
+   ours would beat -- which is how YouTube's own "Video unavailable" page ended
+   up showing through our explanation of it. */
+.media-youtube[hidden] { display: none; }
+
 .media-video,
 .media-youtube,
 .media-youtube iframe {
@@ -2173,24 +2178,66 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 /* ---------------------------------------------------------------------------
    Appreciation: the whole screen, for a moment
 --------------------------------------------------------------------------- */
-.praise-group {
+/* ---------------------------------------------------------------------------
+   Toolbar groups
+   Fourteen controls in one undifferentiated row is a row nobody can find
+   anything in. Each group is a cluster with its own breathing space, and they
+   wrap as units so a group is never split across two lines.
+--------------------------------------------------------------------------- */
+.tgroup {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding-left: 6px;
-  border-left: 1px solid var(--border);
-  margin-left: 4px;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 14px;
+  /* The whole cluster moves to the next line together rather than breaking up. */
+  flex: 0 0 auto;
 }
 
-.praise-label {
-  display: grid;
-  place-items: center;
-  color: var(--warn);
-  padding: 0 4px;
+.tgroup + .tgroup { border-left: 1px solid var(--border); padding-left: 10px; }
+
+.tgroup:empty { display: none; }
+
+/* Praise reads as one control with four choices, in the warm colour rather
+   than the navy everything else uses: it is for the class, not for running
+   the meeting. */
+.tgroup.praise {
+  background: #fff8ec;
+  border: 1px solid #f0d9ae;
+  padding: 4px 8px;
 }
 
-.tbtn.praise { gap: 5px; }
-.praise-emoji { font-size: 15px; line-height: 1; }
+.tgroup.praise + .tgroup,
+.tgroup.praise { border-left-width: 1px; }
+
+.tgroup-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px 0 2px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8a5200;
+  white-space: nowrap;
+}
+
+.tbtn.praise {
+  min-width: 74px;
+  gap: 4px;
+  border-color: #f0d9ae;
+  background: #fff;
+  color: #8a5200;
+}
+
+.tbtn.praise:hover:not(:disabled) { background: #fdf1dc; border-color: #e3bd77; }
+
+.praise-emoji { font-size: 18px; line-height: 1; }
+
+/* Ending the meeting and leaving sit at the far end, away from everything
+   pressed by accident. */
+.tgroup.end { margin-left: auto; }
 
 .celebrate {
   position: fixed;
