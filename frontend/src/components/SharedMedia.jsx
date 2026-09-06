@@ -24,6 +24,26 @@ const DRIFT_TOLERANCE_SEC = 1.5;
  */
 const AUTOPLAY_GRACE_MS = 1500;
 
+/** If the player has not started by now, something is wrong and silence is not an answer. */
+const PLAYER_READY_TIMEOUT_MS = 8000;
+
+/**
+ * Why an error rather than a blank frame.
+ *
+ * A YouTube embed that cannot play mostly fails by rendering nothing at all: a
+ * video whose owner has disabled embedding, a network that does not reach
+ * YouTube, a player that never finished starting. A white rectangle tells a
+ * teacher standing in front of a class precisely nothing, so anything that goes
+ * wrong here has to end in words and a way out.
+ */
+const YT_ERRORS = {
+  2: "That video link is not valid",
+  5: "This browser cannot play that video",
+  100: "That video is private or has been removed",
+  101: "The owner of this video does not allow it to be played outside YouTube",
+  150: "The owner of this video does not allow it to be played outside YouTube",
+};
+
 const YT_API_SRC = "https://www.youtube.com/iframe_api";
 let youtubeApi = null;
 
@@ -52,6 +72,8 @@ function loadYouTubeApi() {
     tag.src = YT_API_SRC;
     tag.async = true;
     tag.onerror = () => {
+      // Cleared so a later attempt can try again rather than inheriting a
+      // promise that will never resolve.
       youtubeApi = null;
       reject(new Error("YouTube could not be reached from this network"));
     };
@@ -163,6 +185,7 @@ function ClipStage({ media, canControl, onControl, onStop }) {
           onPlay={() => report("play")}
           onPause={() => report("pause")}
           onSeeked={() => report("seek")}
+          onError={() => console.error("[SharedMedia] clip failed to load", media.src)}
         />
         {needsGesture ? (
           <TapToPlay
@@ -198,11 +221,32 @@ function YouTubeStage({ media, canControl, onControl, onStop }) {
   useEffect(() => {
     let cancelled = false;
     let player = null;
+    let ready = false;
+    const host = hostRef.current;
+
+    const watchdog = setTimeout(() => {
+      if (!cancelled && !ready) {
+        setError("The video did not start. It may not be reachable from this network.");
+      }
+    }, PLAYER_READY_TIMEOUT_MS);
 
     loadYouTubeApi()
       .then((YT) => {
-        if (cancelled || !hostRef.current) return;
-        player = new YT.Player(hostRef.current, {
+        if (cancelled || !host) return;
+        /**
+         * A node of our own, created here rather than rendered by React.
+         *
+         * YouTube REPLACES the element it is handed with its iframe. Giving it
+         * a node React is managing leaves React holding a reference to
+         * something no longer in the document, and a later render can wipe the
+         * player out from under itself.
+         */
+        const mount = document.createElement("div");
+        host.appendChild(mount);
+
+        player = new YT.Player(mount, {
+          width: "100%",
+          height: "100%",
           videoId: media.videoId,
           playerVars: {
             autoplay: 1,
@@ -213,9 +257,18 @@ function YouTubeStage({ media, canControl, onControl, onStop }) {
             modestbranding: 1,
             rel: 0,
             playsinline: 1,
+            enablejsapi: 1,
+            /**
+             * Without this the player and the page disagree about who they are
+             * talking to. On some origins the embed then never finishes
+             * loading, which looks exactly like a blank white video.
+             */
+            origin: window.location.origin,
           },
           events: {
             onReady: (e) => {
+              ready = true;
+              clearTimeout(watchdog);
               playerRef.current = e.target;
               applying.current = true;
               try {
@@ -227,8 +280,8 @@ function YouTubeStage({ media, canControl, onControl, onStop }) {
               }
               setTimeout(() => {
                 applying.current = false;
-                // If it has not started by now the browser has refused, and
-                // the student needs to be told they can start it themselves.
+                // Not playing by now means the browser refused to start it,
+                // and the student needs to know they can start it themselves.
                 const state = playerRef.current?.getPlayerState?.();
                 if (!latest.current.paused && state !== 1) setNeedsGesture(true);
               }, AUTOPLAY_GRACE_MS);
@@ -244,22 +297,30 @@ function YouTubeStage({ media, canControl, onControl, onStop }) {
                 controlRef.current({ action: "pause", positionSec: e.target.getCurrentTime() });
               }
             },
-            onError: () => setError("This video cannot be played here"),
+            onError: (e) => {
+              clearTimeout(watchdog);
+              console.error("[SharedMedia] YouTube error", e.data);
+              setError(YT_ERRORS[e.data] || `That video could not be played (code ${e.data})`);
+            },
           },
         });
       })
       .catch((err) => {
+        clearTimeout(watchdog);
         console.error("[SharedMedia] YouTube API failed", err);
         setError(err.message);
       });
 
     return () => {
       cancelled = true;
+      clearTimeout(watchdog);
       try {
         player?.destroy?.();
       } catch (err) {
         console.error("[SharedMedia] YouTube teardown failed", err);
       }
+      // Whatever YouTube left behind goes with it. React never owned it.
+      if (host) host.innerHTML = "";
       playerRef.current = null;
     };
     // Rebuilt only for a different video: everything else is applied to the
@@ -286,17 +347,23 @@ function YouTubeStage({ media, canControl, onControl, onStop }) {
     }, 400);
   }, [media.paused, media.positionSec]);
 
+  const watchUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(media.videoId || "")}`;
+
   return (
     <div className="media-stage">
       <MediaHeader media={media} canControl={canControl} onStop={onStop} />
       <div className="media-frame">
+        {/* Kept mounted even while an error shows: tearing the host out from
+            under a player that may still be loading turns one failure into two. */}
+        <div className="media-youtube" ref={hostRef} hidden={Boolean(error)} />
         {error ? (
-          <div className="media-error">{error}</div>
-        ) : (
-          <div className="media-youtube">
-            <div ref={hostRef} />
+          <div className="media-error">
+            <p>{error}</p>
+            <a className="media-external" href={watchUrl} target="_blank" rel="noreferrer noopener">
+              Open it on YouTube
+            </a>
           </div>
-        )}
+        ) : null}
         {needsGesture && !error ? (
           <TapToPlay
             onTap={() => {

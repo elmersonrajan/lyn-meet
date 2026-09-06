@@ -615,8 +615,17 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   // "media" is the stage mode the server sets when something is shared; a
   // client that has the media but an older stage mode still shows it, so a
   // missed stage-mode message cannot leave the class staring at a blank board.
-  const showMedia = Boolean(sharedMedia) && stageMode === "media";
-  const onBoard = stageMode === "whiteboard" || stageMode === "draw";
+  /**
+   * Having the video is enough to show it.
+   *
+   * Requiring the stage mode to agree as well meant two separate messages both
+   * had to arrive: a client that got "something is playing" but missed the
+   * stage change showed neither the board nor the video, which is a blank white
+   * stage and no way to tell why. The video is only stood down for the two
+   * things that deliberately replace it.
+   */
+  const showMedia = Boolean(sharedMedia) && stageMode !== "screen" && stageMode !== "draw";
+  const onBoard = !showMedia && stageMode !== "screen";
 
   const teacherPeer = participants.find((p) => p.role === "teacher");
   const teacherName = teacherPeer?.name || "Teacher";
