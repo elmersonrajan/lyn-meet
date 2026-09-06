@@ -199,6 +199,18 @@ server holds *what* is playing and *where it has got to*, so a student joining
 ten minutes in starts ten minutes in. Staff drive play, pause and seek; students
 have no scrubber. Nothing is muted -- the audio is the point.
 
+**If a clip upload fails**, the size limit in front of this server is the first
+thing to check — nginx defaults to `client_max_body_size 1m`, which refuses any
+real video with a 413 before the request ever reaches Node:
+
+```nginx
+client_max_body_size 320m;   # must be >= CLIP_MAX_SIZE
+```
+
+`pm2 logs lyn-backend | grep -i clip` settles where the failure is: a
+`[Clips] clip stored` line means the file arrived and the problem is elsewhere;
+silence means it was refused before it got here.
+
 A browser may refuse to start sound on its own if the viewer has not interacted
 with the page yet. When that happens the student is offered a **Tap to play with
 sound** button rather than a silent video.

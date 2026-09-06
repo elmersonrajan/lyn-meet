@@ -21,6 +21,7 @@ import AttendancePanel from "./AttendancePanel.jsx";
 import MeetingInfo from "./MeetingInfo.jsx";
 import { syncUrlToMeeting } from "../services/meetingLink.js";
 import { APPRECIATIONS } from "../services/appreciations.js";
+import { uploadClip, describeFile } from "../services/clipUpload.js";
 import { IconPen, IconScreen, IconClip, IconYouTube } from "./Icons.jsx";
 
 export default function MeetingRoom({ socket, joinPayload, onLeft }) {
@@ -54,6 +55,9 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   // somebody uploaded or a YouTube video, with the position everyone shares.
   const [sharedMedia, setSharedMedia] = useState(joinPayload.media || null);
   const [mediaBusy, setMediaBusy] = useState(false);
+  // Percent, while a clip is on its way up. A large file with no feedback is
+  // indistinguishable from a feature that does not work.
+  const [clipProgress, setClipProgress] = useState(null);
   const [boards, setBoards] = useState(joinPayload.boards || []);
   const [activeBoardId, setActiveBoardId] = useState(joinPayload.activeBoardId || null);
   const [boardBusy, setBoardBusy] = useState(false);
@@ -479,26 +483,29 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     // Cleared immediately so choosing the same file twice still fires onChange.
     e.target.value = "";
     if (!file || !isStaff) return;
+
+    // Refused here rather than after a long upload that was never going to be
+    // accepted: the teacher is standing in front of a class.
+    const refusal = describeFile(file);
+    if (refusal) {
+      setToast(refusal);
+      return;
+    }
+
     setMediaBusy(true);
+    setClipProgress(0);
     try {
-      showToast(`Uploading ${file.name}…`);
-      const res = await fetch("/api/clips", {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": file.type || "video/mp4",
-          "X-Meeting-Id": session.meetingId,
-        },
-        body: file,
+      const body = await uploadClip(file, {
+        meetingId: session.meetingId,
+        onProgress: setClipProgress,
       });
-      const body = await res.json();
-      if (!res.ok || !body.ok) throw new Error(body.error || "The clip could not be uploaded");
       await emitAck("share-media", { kind: "clip", src: body.src, title: file.name });
     } catch (err) {
       console.error("[MeetingRoom] clip share failed", err);
       setToast(err.message);
     } finally {
       setMediaBusy(false);
+      setClipProgress(null);
     }
   };
 
@@ -667,9 +674,18 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
                 <IconScreen size={16} />
                 Screen
               </button>
-              <label className={sharedMedia?.kind === "clip" ? "active" : ""}>
+              <label
+                className={`${showMedia && sharedMedia?.kind === "clip" ? "active" : ""} ${
+                  clipProgress != null ? "busy" : ""
+                }`}
+                title={
+                  clipProgress != null
+                    ? "Sending the video to the server"
+                    : "Play a video file to the class"
+                }
+              >
                 <IconClip size={16} />
-                Video Clip
+                {clipProgress != null ? `Uploading ${clipProgress}%` : "Video Clip"}
                 <input
                   ref={clipInputRef}
                   type="file"
