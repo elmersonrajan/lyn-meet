@@ -15,7 +15,6 @@ const assert = require("node:assert");
 const {
   APPRECIATIONS,
   youtubeId,
-  clipPath,
   cleanTitle,
   buildMedia,
   mediaPublic,
@@ -65,23 +64,6 @@ test("anything that is not a YouTube video is refused", () => {
   }
 });
 
-test("a clip is only ever one this server stored", () => {
-  assert.equal(clipPath("/clips/10197_1788600000000.mp4"), "/clips/10197_1788600000000.mp4");
-  // Anywhere else, or anything that tries to leave the folder, is not a clip.
-  for (const path of [
-    "/clips/../.env",
-    "/clips/../../etc/passwd",
-    "/etc/passwd",
-    "https://attacker.example/evil.mp4",
-    "//attacker.example/evil.mp4",
-    "clips/x.mp4",
-    "/clips/",
-    "",
-  ]) {
-    assert.equal(clipPath(path), null, path);
-  }
-});
-
 test("titles are shown to the room, so they are cleaned rather than trusted", () => {
   assert.equal(cleanTitle("  Lesson 4 intro  ", "fallback"), "Lesson 4 intro");
   assert.equal(cleanTitle("", "Video clip"), "Video clip");
@@ -108,8 +90,10 @@ test("buildMedia keeps the id, never the URL the client sent", () => {
 
 test("refusing to share is an error the teacher can read", () => {
   assert.throws(() => buildMedia({ kind: "youtube", url: "https://vimeo.com/1" }), /YouTube/);
-  assert.throws(() => buildMedia({ kind: "clip", src: "/etc/passwd" }), /uploaded/);
   assert.throws(() => buildMedia({ kind: "iframe", url: "https://x" }), /Unknown kind/);
+  // Uploading a video file is gone; a video that is not on YouTube is played
+  // by sharing the tab it is in, which never reaches this module at all.
+  assert.throws(() => buildMedia({ kind: "clip", src: "/clips/x.mp4" }), /Unknown kind/);
   assert.throws(() => buildMedia({}), /Unknown kind/);
 });
 
@@ -117,8 +101,8 @@ test("a student joining late is told where the video is now, not where it starte
   const startedAt = Date.now() - 60000;
   const room = {
     media: {
-      kind: "clip",
-      src: "/clips/x.mp4",
+      kind: "youtube",
+      videoId: "dQw4w9WgXcQ",
       title: "x",
       positionSec: 30,
       paused: false,

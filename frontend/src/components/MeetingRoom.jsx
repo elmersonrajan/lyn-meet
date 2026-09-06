@@ -21,7 +21,6 @@ import AttendancePanel from "./AttendancePanel.jsx";
 import MeetingInfo from "./MeetingInfo.jsx";
 import { syncUrlToMeeting } from "../services/meetingLink.js";
 import { APPRECIATIONS } from "../services/appreciations.js";
-import { uploadClip, describeFile } from "../services/clipUpload.js";
 import { IconPen, IconScreen, IconClip, IconYouTube } from "./Icons.jsx";
 
 export default function MeetingRoom({ socket, joinPayload, onLeft }) {
@@ -55,9 +54,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   // somebody uploaded or a YouTube video, with the position everyone shares.
   const [sharedMedia, setSharedMedia] = useState(joinPayload.media || null);
   const [mediaBusy, setMediaBusy] = useState(false);
-  // Percent, while a clip is on its way up. A large file with no feedback is
-  // indistinguishable from a feature that does not work.
-  const [clipProgress, setClipProgress] = useState(null);
+  // Open while the teacher is being told how to share a video with its sound.
+  const [videoHelpOpen, setVideoHelpOpen] = useState(false);
   const [boards, setBoards] = useState(joinPayload.boards || []);
   const [activeBoardId, setActiveBoardId] = useState(joinPayload.activeBoardId || null);
   const [boardBusy, setBoardBusy] = useState(false);
@@ -68,7 +66,6 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   const [ytOpen, setYtOpen] = useState(false);
   const [ytError, setYtError] = useState("");
   const [endingSession, setEndingSession] = useState(false);
-  const clipInputRef = useRef(null);
 
   const selfId = session.peer?.id;
   const handRaised = participants.some((p) => p.id === selfId && p.handRaised);
@@ -478,34 +475,33 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
    * is what gets the sound to the students, at their own volume, in their own
    * quality.
    */
-  const pickClip = async (e) => {
-    const file = e.target.files?.[0];
-    // Cleared immediately so choosing the same file twice still fires onChange.
-    e.target.value = "";
-    if (!file || !isStaff) return;
-
-    // Refused here rather than after a long upload that was never going to be
-    // accepted: the teacher is standing in front of a class.
-    const refusal = describeFile(file);
-    if (refusal) {
-      setToast(refusal);
-      return;
-    }
-
+  /**
+   * Playing a video to the class is a screen share of the tab it is playing in.
+   *
+   * Uploading the file was the other way round -- send it to the server, have
+   * every browser fetch it back -- and it ran into the one limit that has
+   * nothing to do with this application: what the proxy in front of the server
+   * will accept. Sharing the tab has no size limit at all, works for a video
+   * that is not a file, and carries the original sound.
+   *
+   * The dialog exists for one reason: the audio tickbox in Chrome's picker is
+   * easy to miss, and a silent video is the failure this feature is for.
+   */
+  const playVideo = async () => {
+    if (!isStaff) return;
+    setVideoHelpOpen(false);
     setMediaBusy(true);
-    setClipProgress(0);
     try {
-      const body = await uploadClip(file, {
-        meetingId: session.meetingId,
-        onProgress: setClipProgress,
-      });
-      await emitAck("share-media", { kind: "clip", src: body.src, title: file.name });
+      await media.startScreen({ preferTab: true });
+      await emitAck("set-stage", { mode: "screen" });
+      setStageMode("screen");
     } catch (err) {
-      console.error("[MeetingRoom] clip share failed", err);
-      setToast(err.message);
+      console.error("[MeetingRoom] play video failed", err);
+      // A teacher who closes the picker has not hit an error, they have
+      // changed their mind.
+      if (err.name !== "NotAllowedError") setToast(err.message);
     } finally {
       setMediaBusy(false);
-      setClipProgress(null);
     }
   };
 
@@ -674,27 +670,15 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
                 <IconScreen size={16} />
                 Screen
               </button>
-              <label
-                className={`${showMedia && sharedMedia?.kind === "clip" ? "active" : ""} ${
-                  clipProgress != null ? "busy" : ""
-                }`}
-                title={
-                  clipProgress != null
-                    ? "Sending the video to the server"
-                    : "Play a video file to the class"
-                }
+              <button
+                className={mediaBusy ? "busy" : ""}
+                onClick={() => setVideoHelpOpen(true)}
+                disabled={mediaBusy}
+                title="Play a video to the class from a browser tab, with its sound"
               >
                 <IconClip size={16} />
-                {clipProgress != null ? `Uploading ${clipProgress}%` : "Video Clip"}
-                <input
-                  ref={clipInputRef}
-                  type="file"
-                  accept="video/*"
-                  hidden
-                  disabled={mediaBusy}
-                  onChange={pickClip}
-                />
-              </label>
+                Play Video
+              </button>
               <button
                 className={showMedia && sharedMedia?.kind === "youtube" ? "active" : ""}
                 onClick={() => {
@@ -839,6 +823,21 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
 
       {/* Above everything, briefly, for everyone in the room. */}
       <Appreciation award={award} onDone={() => setAward(null)} />
+
+      {/*
+        The one thing that goes wrong when a teacher shares a video: Chrome's
+        audio tickbox is easy to miss, and the class then watches in silence.
+      */}
+      <ConfirmDialog
+        open={videoHelpOpen && isStaff}
+        title="Play a video to the class"
+        message="Open the video in another browser tab, then choose that tab here — and tick 'Also share tab audio', or the class will see the video without hearing it."
+        confirmLabel="Choose the tab"
+        cancelLabel="Cancel"
+        busy={mediaBusy}
+        onConfirm={playVideo}
+        onCancel={() => setVideoHelpOpen(false)}
+      />
 
       <YouTubeDialog
         open={ytOpen && isStaff}

@@ -3,9 +3,8 @@
  *
  * Everything the browser sends about shared media passes through here first.
  * The rule is that nothing a client typed is ever handed back out to the room
- * as-is -- a YouTube link becomes an eleven-character video id, an uploaded
- * clip becomes a path this server knows it wrote, and an appreciation becomes
- * one of exactly four messages chosen here. A field that arrives as free text
+ * as-is -- a YouTube link becomes an eleven-character video id, and an
+ * appreciation becomes one of exactly four messages chosen here. A field that arrives as free text
  * is a field that can arrive as anything, and this one lands on the screens of
  * a class of children.
  */
@@ -68,22 +67,6 @@ function youtubeId(input) {
 }
 
 /**
- * A clip is only ever one this server stored.
- *
- * The browser sends back the path the upload gave it, and it is checked rather
- * than trusted: without this, "play this to the class" would accept any address
- * at all and put it on every screen in the room.
- */
-const CLIP_PATH = /^\/clips\/[A-Za-z0-9._-]{1,120}$/;
-
-function clipPath(input) {
-  const raw = String(input || "").trim();
-  if (!CLIP_PATH.test(raw)) return null;
-  if (raw.includes("..")) return null;
-  return raw;
-}
-
-/**
  * Titles are shown on every screen in the room, so control characters go and
  * the length is capped -- a file name is not a place to keep anything that can
  * rearrange a line of text.
@@ -101,7 +84,7 @@ function cleanTitle(title, fallback) {
  * Throws rather than returning null: refusing to share is a message the
  * teacher needs to read, not a silent no-op in front of a class.
  */
-function buildMedia({ kind, url, src, title } = {}) {
+function buildMedia({ kind, url, title } = {}) {
   const now = Date.now();
   const base = { positionSec: 0, paused: false, startedAt: now, updatedAt: now };
 
@@ -111,12 +94,6 @@ function buildMedia({ kind, url, src, title } = {}) {
     return { ...base, kind: "youtube", videoId, title: cleanTitle(title, "YouTube video") };
   }
 
-  if (kind === "clip") {
-    const path = clipPath(src);
-    if (!path) throw new Error("That clip was not uploaded to this meeting");
-    return { ...base, kind: "clip", src: path, title: cleanTitle(title, "Video clip") };
-  }
-
   throw new Error("Unknown kind of media");
 }
 
@@ -124,7 +101,7 @@ function buildMedia({ kind, url, src, title } = {}) {
  * What is playing, and where it has got to *now*.
  *
  * The room stores a position and the moment it was reported. Reading it back
- * this way is what lets a student who joins ten minutes into a clip start ten
+ * this way is what lets a student who joins ten minutes into a video start ten
  * minutes in, rather than at the point the teacher last pressed something.
  */
 function mediaPublic(room, now = Date.now()) {
@@ -134,8 +111,7 @@ function mediaPublic(room, now = Date.now()) {
   return {
     kind: media.kind,
     title: media.title,
-    src: media.src || null,
-    videoId: media.videoId || null,
+    videoId: media.videoId,
     paused: media.paused,
     positionSec: Number((media.positionSec + drift).toFixed(2)),
     startedAt: media.startedAt,
@@ -151,7 +127,6 @@ function boardsPublic(room) {
 module.exports = {
   APPRECIATIONS,
   youtubeId,
-  clipPath,
   cleanTitle,
   buildMedia,
   mediaPublic,

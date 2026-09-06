@@ -28,10 +28,6 @@ export default defineConfig({
       // whether a path reaches the backend at all.
       "/auth": { target: "http://127.0.0.1:5000" },
       "/recordings": { target: "http://127.0.0.1:5000" },
-      // Clips the class watches together. Every student fetches the file from
-      // the backend, so without an entry here they would be served index.html
-      // and the shared video would be a blank stage for everyone but staff.
-      "/clips": { target: "http://127.0.0.1:5000" },
       "/health": { target: "http://127.0.0.1:5000" },
       // Domain ownership proof for the mobile apps. Without this the SPA
       // answers it with index.html, Android's check fails silently, and every

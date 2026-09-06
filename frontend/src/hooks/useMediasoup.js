@@ -544,12 +544,15 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
    * teacher's microphone, so muting the teacher does not mute the video and the
    * recording can keep them apart.
    */
-  const startScreen = useCallback(async () => {
+  const startScreen = useCallback(async ({ preferTab = false } = {}) => {
     try {
       if (role !== "teacher" && role !== "coordinator") throw new Error("Only teacher or coordinator can share screen");
-      console.log("[Mediasoup] startScreen");
+      console.log("[Mediasoup] startScreen", { preferTab });
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
+        // Playing a video means sharing the tab it is in, so the picker opens
+        // on tabs rather than on whole screens. A browser that does not know
+        // this hint ignores it and shows its usual chooser.
+        video: preferTab ? { displaySurface: "browser" } : true,
         // Asked for every time. A browser that will not give it simply returns
         // no audio track, and the share goes ahead silently rather than failing.
         audio: {
@@ -557,6 +560,9 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
           noiseSuppression: false,
           autoGainControl: false,
         },
+        // Windows can hand over the whole machine's sound when a screen rather
+        // than a tab is chosen. Ignored everywhere it means nothing.
+        systemAudio: "include",
       });
       const track = stream.getVideoTracks()[0];
       const producer = await sendTransportRef.current.produce({

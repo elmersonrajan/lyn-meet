@@ -19,7 +19,6 @@ const { startIdleReaper } = require("./rooms/idleReaper");
 const { RECORDINGS_DIR } = require("./recording/cloudRecorder");
 const attendance = require("./attendance/attendanceLog");
 const attendanceDb = require("./attendance/attendanceDb");
-const clips = require("./recording/clips");
 const { rooms } = require("./mediasoup/roomManager");
 const { createLogger } = require("./utils/logger");
 
@@ -238,60 +237,6 @@ async function main() {
     // Finished class recordings are student data, not public files.
     app.use("/recordings", requireStaff, express.static(RECORDINGS_DIR));
 
-    /**
-     * Clips the class watches together.
-     *
-     * Served to anyone signed in, not just staff: the whole point is that every
-     * student plays the file for themselves, which is what carries the sound.
-     * `attachUser` upstream is what makes "signed in" mean anything here.
-     */
-    app.use(
-      "/clips",
-      (req, res, next) => {
-        if (!req.user && !authConfig.authDisabled) {
-          res.status(401).json({ ok: false, error: "Sign in to watch this" });
-          return;
-        }
-        next();
-      },
-      express.static(clips.CLIPS_DIR, {
-        // Range requests are how a browser seeks, and every student in the room
-        // will be seeking to wherever the teacher is.
-        acceptRanges: true,
-        maxAge: "1h",
-      }),
-    );
-
-    /**
-     * Uploading the clip is what makes it shareable at all.
-     *
-     * Staff only, one fixed set of video types, and the stored name is built
-     * by the server -- what the browser called the file never reaches the
-     * filesystem.
-     */
-    app.post(
-      "/api/clips",
-      requireStaff,
-      express.raw({ type: "*/*", limit: process.env.CLIP_MAX_SIZE || "300mb" }),
-      (req, res) => {
-        try {
-          const meetingId = String(req.headers["x-meeting-id"] || "unknown");
-          const contentType = String(req.headers["content-type"] || "");
-          const buf = req.body;
-          if (!buf || !buf.length) throw new Error("That file is empty");
-          if (!clips.isSupported(contentType)) {
-            throw new Error(`${contentType || "That file"} cannot be played in a browser`);
-          }
-          const stored = clips.save(meetingId, buf, contentType);
-          log.action("clip uploaded", { meetingId, bytes: buf.length, src: stored.src });
-          res.json({ ok: true, ...stored });
-        } catch (err) {
-          log.error("/api/clips failed", err);
-          res.status(400).json({ ok: false, error: err.message });
-        }
-      },
-    );
-
     app.post(
       "/api/recordings/chunk",
       requireStaff,
@@ -463,7 +408,6 @@ async function main() {
         if (published) log.warn("published recordings that had no row", { published });
       })
       .catch((err) => log.error("recording sweep failed", err.message));
-    clips.sweep();
 
     server.listen(PORT, HOST, () => {
       log.info(`backend listening on http://${HOST}:${PORT}`);
