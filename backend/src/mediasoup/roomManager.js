@@ -3,6 +3,8 @@ const { createRouter } = require("./workerManager");
 const { CloudRecorder } = require("../recording/cloudRecorder");
 const attendance = require("../attendance/attendanceLog");
 const { mediaProfile } = require("../config/media");
+const boardImages = require("../whiteboard/boardImages");
+const documents = require("../whiteboard/documents");
 const { createLogger } = require("../utils/logger");
 
 const log = createLogger("RoomManager");
@@ -720,6 +722,17 @@ async function closeRoom(room) {
       log.error("router close failed", err);
     }
     rooms.delete(room.id);
+
+    /**
+     * The pictures and documents of this lesson go with it.
+     *
+     * They are teaching materials for one class, held on the server only so
+     * that every browser in the room could fetch them. Once there is no room,
+     * there is nobody to fetch them and no reason to keep somebody's worksheet
+     * on a disk it was never meant to live on.
+     */
+    boardImages.removeForMeeting(room.id);
+    documents.removeForMeeting(room.id);
   } catch (err) {
     log.error("closeRoom failed", err);
     throw err;

@@ -1,25 +1,22 @@
 /**
  * Pictures pasted onto a whiteboard.
  *
- * A teacher pastes a diagram, a photograph of a page, or a screenshot of a
- * PDF, and then writes on top of it. That is the shape of the feature: the
- * image is the page, the strokes are the working.
+ * A teacher pastes a diagram, a photograph of a page, or a screenshot, and
+ * then writes on top of it. The image is the page, the strokes are the working.
  *
- * What arrives here is not a PNG or a JPEG -- it is raw pixels, already scaled
- * by the browser to exactly the size of a board frame. That is deliberate. The
- * server has to composite this picture into the class recording, and the frame
- * renderer is a hand-written pixel buffer with no image decoder in it. Sending
- * pixels means nothing on this side has to parse a file format that a client
- * chose: there is no decoder to get wrong, no format to be surprised by, and
- * no failure mode beyond a length that does not match.
+ * What arrives is a PNG, already scaled by the browser to the shape of a board.
+ * It used to be raw pixels -- about 2.7 MB of them -- because the server had to
+ * composite the picture into the class recording and its frame renderer has no
+ * image decoder. Now that a recording is a capture of the teacher's own screen,
+ * that requirement is gone, and with it the reason to put three megabytes on
+ * the wire for a diagram that compresses to two hundred kilobytes.
  *
- * The browsers get a PNG, encoded here from those same pixels by the encoder
- * the recorder already uses.
+ * These are the pages of one lesson. They are swept while the server runs, not
+ * only when it restarts, and a meeting takes its pictures with it when it ends.
  */
 const fs = require("fs");
 const path = require("path");
 const { createLogger } = require("../utils/logger");
-const { encodePng, FRAME_W, FRAME_H } = require("../recording/whiteboardFrame");
 
 const log = createLogger("BoardImages");
 
@@ -28,84 +25,85 @@ const DIR = process.env.BOARD_IMAGES_DIR
   : path.join(__dirname, "..", "..", "board-images");
 
 /** Long enough for the lesson it was pasted into, and no longer. */
-const MAX_AGE_MS = Number(process.env.BOARD_IMAGE_MAX_AGE_HOURS || 24) * 60 * 60 * 1000;
-
-/** One board frame of 8-bit RGB. Anything else is not a board image. */
-const EXPECTED_BYTES = FRAME_W * FRAME_H * 3;
+const MAX_AGE_MS = Number(process.env.BOARD_IMAGE_MAX_AGE_HOURS || 6) * 60 * 60 * 1000;
 
 /**
- * The last few images, kept in memory.
- *
- * The recorder asks for the live board's pixels once a second while a class is
- * being recorded, and reading three megabytes off disk at that rate for an
- * hour is work nobody needs done.
+ * Generous for a scaled-down board picture, and far below anything that would
+ * trouble a websocket frame.
  */
-const CACHE_LIMIT = 4;
-const cache = new Map();
+const MAX_BYTES = Number(process.env.BOARD_IMAGE_MAX_BYTES || 8 * 1024 * 1024);
 
-function remember(id, buffer) {
-  cache.set(id, buffer);
-  if (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value);
+/** A PNG says so in its first eight bytes, whatever it is called. */
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+function looksLikePng(buffer) {
+  return (
+    Buffer.isBuffer(buffer) && buffer.length > 8 && buffer.subarray(0, 8).equals(PNG_MAGIC)
+  );
 }
 
 function safeId(id) {
   return /^[A-Za-z0-9_-]{1,80}$/.test(String(id || "")) ? String(id) : null;
 }
 
+/** The meeting a stored file belongs to, which is the first part of its name. */
+function meetingKey(meetingId) {
+  return (
+    String(meetingId || "meeting")
+      .replace(/[^a-zA-Z0-9_-]/g, "_")
+      .slice(0, 48) || "meeting"
+  );
+}
+
 /**
- * Stores one pasted image.
+ * Stores one pasted picture.
  *
- * @param {string} meetingId only for the file name, so an orphan can be traced
- * @param {Buffer} rgb exactly FRAME_W * FRAME_H * 3 bytes
+ * @param {string} meetingId
+ * @param {Buffer} png
  * @returns {{id: string, url: string}}
  */
-function save(meetingId, rgb) {
-  if (!Buffer.isBuffer(rgb) || rgb.length !== EXPECTED_BYTES) {
-    throw new Error("That image did not arrive in a shape this server can use");
+function save(meetingId, png) {
+  const buffer = Buffer.isBuffer(png) ? png : Buffer.from(png || []);
+  if (!buffer.length) throw new Error("That picture arrived empty");
+  if (!looksLikePng(buffer)) throw new Error("That picture did not arrive as an image");
+  if (buffer.length > MAX_BYTES) {
+    throw new Error(
+      `That picture is ${Math.round(buffer.length / (1024 * 1024))} MB, which is more than a board needs`,
+    );
   }
+
   fs.mkdirSync(DIR, { recursive: true });
+  const id = `${meetingKey(meetingId)}_${Date.now()}`;
+  fs.writeFileSync(path.join(DIR, `${id}.png`), buffer);
 
-  const meeting = String(meetingId || "meeting")
-    .replace(/[^a-zA-Z0-9_-]/g, "_")
-    .slice(0, 48) || "meeting";
-  const id = `${meeting}_${Date.now()}`;
-
-  // The pixels, for the recording.
-  fs.writeFileSync(path.join(DIR, `${id}.rgb`), rgb);
-  // The same pixels as a PNG, for the browsers.
-  fs.writeFileSync(path.join(DIR, `${id}.png`), encodePng(rgb, FRAME_W, FRAME_H));
-
-  remember(id, rgb);
-  log.action("board image stored", { meetingId, id, bytes: rgb.length });
+  log.action("board picture stored", { meetingId, id, bytes: buffer.length });
   return { id, url: `/board-images/${id}.png` };
 }
 
-/**
- * The pixels behind a board, for compositing into a recording frame.
- * Returns null when there is no such image -- the recording then shows the
- * strokes on a plain background, which is wrong but not broken.
- */
-function pixels(id) {
-  const clean = safeId(id);
-  if (!clean) return null;
-  if (cache.has(clean)) return cache.get(clean);
+/** Everything this meeting pasted, gone the moment the meeting is. */
+function removeForMeeting(meetingId) {
   try {
-    const buffer = fs.readFileSync(path.join(DIR, `${clean}.rgb`));
-    if (buffer.length !== EXPECTED_BYTES) return null;
-    remember(clean, buffer);
-    return buffer;
-  } catch {
-    return null;
+    if (!fs.existsSync(DIR)) return 0;
+    const prefix = `${meetingKey(meetingId)}_`;
+    let removed = 0;
+    for (const name of fs.readdirSync(DIR)) {
+      if (!name.startsWith(prefix)) continue;
+      try {
+        fs.unlinkSync(path.join(DIR, name));
+        removed += 1;
+      } catch (err) {
+        log.error("could not remove a board picture", { name, error: err.message });
+      }
+    }
+    if (removed) log.info("board pictures removed with the meeting", { meetingId, removed });
+    return removed;
+  } catch (err) {
+    log.error("removeForMeeting failed", err);
+    return 0;
   }
 }
 
-/**
- * Deletes images older than a day, at boot.
- *
- * These are the pages of one lesson, not a library. Run at startup rather than
- * on a timer: the server restarts often enough, and a sweep that only happens
- * while a process stays alive is one more thing that quietly stops happening.
- */
+/** Deletes anything older than a lesson. */
 function sweep(now = Date.now()) {
   try {
     if (!fs.existsSync(DIR)) return 0;
@@ -117,15 +115,15 @@ function sweep(now = Date.now()) {
         fs.unlinkSync(file);
         removed += 1;
       } catch (err) {
-        log.error("could not remove an old board image", { name, error: err.message });
+        log.error("could not remove an old board picture", { name, error: err.message });
       }
     }
-    if (removed) log.info("old board images removed", { removed });
+    if (removed) log.info("old board pictures removed", { removed });
     return removed;
   } catch (err) {
-    log.error("board image sweep failed", err);
+    log.error("board picture sweep failed", err);
     return 0;
   }
 }
 
-module.exports = { DIR, EXPECTED_BYTES, save, pixels, sweep, safeId };
+module.exports = { DIR, MAX_BYTES, save, sweep, removeForMeeting, safeId, looksLikePng };

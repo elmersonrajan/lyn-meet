@@ -49,17 +49,23 @@ export function imageFrom(dataTransfer) {
 }
 
 /**
- * Scales an image to fit a board frame, and returns its pixels.
+ * Scales an image to the shape of a board and encodes it as a PNG.
  *
  * Fitted rather than filled: a page pasted from a document is the wrong shape
  * for a 16:9 board, and cropping it would cut off the part the teacher wanted.
  * The margins are the board's own background, so a fitted image looks like a
  * sheet of paper on the board rather than a picture in a letterbox.
  *
+ * A PNG, not the raw pixels this used to send. The pixels existed so the
+ * server could composite the picture into a recording without owning an image
+ * decoder; a recording is now a capture of the teacher's screen, so what is
+ * left is a file that has to reach the other browsers -- and 200 KB of PNG
+ * does that far more reliably than 2.7 MB of bitmap.
+ *
  * @param {File|Blob} file
- * @returns {Promise<Uint8Array>} FRAME_W * FRAME_H * 3 bytes of RGB
+ * @returns {Promise<ArrayBuffer>} PNG bytes
  */
-export async function toBoardPixels(file) {
+export async function toBoardPng(file) {
   const url = URL.createObjectURL(file);
   try {
     const image = await new Promise((resolve, reject) => {
@@ -72,7 +78,7 @@ export async function toBoardPixels(file) {
     const canvas = document.createElement("canvas");
     canvas.width = FRAME_W;
     canvas.height = FRAME_H;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("This browser cannot prepare that image");
 
     ctx.fillStyle = BOARD_BG;
@@ -85,16 +91,10 @@ export async function toBoardPixels(file) {
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(image, (FRAME_W - width) / 2, (FRAME_H - height) / 2, width, height);
 
-    const { data } = ctx.getImageData(0, 0, FRAME_W, FRAME_H);
-    // RGBA out, RGB across: the alpha is meaningless here, because everything
-    // has already been composited onto the board's own background.
-    const rgb = new Uint8Array(FRAME_W * FRAME_H * 3);
-    for (let i = 0, j = 0; i < data.length; i += 4, j += 3) {
-      rgb[j] = data[i];
-      rgb[j + 1] = data[i + 1];
-      rgb[j + 2] = data[i + 2];
-    }
-    return rgb;
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("That image could not be prepared"))), "image/png");
+    });
+    return blob.arrayBuffer();
   } finally {
     URL.revokeObjectURL(url);
   }

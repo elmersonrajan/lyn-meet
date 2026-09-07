@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { emitAck } from "../services/socket";
-import { imageFrom, toBoardPixels } from "../services/boardImage";
+import { imageFrom, toBoardPng } from "../services/boardImage";
 import { documentFrom, openDocument, renderPage } from "../services/boardDocument";
 
 /** Map stroke point onto CSS pixel space (nx/ny preferred). */
@@ -201,9 +201,12 @@ export function useWhiteboard({
       if (!allowed || !file) return;
       setPasting(true);
       try {
-        const pixels = await toBoardPixels(file);
-        await emitAck("whiteboard-image", { pixels });
+        const png = await toBoardPng(file);
+        console.log("[Whiteboard] sharing a picture", { bytes: png.byteLength });
+        await emitAck("whiteboard-image", { png });
       } catch (err) {
+        // Loudly. A picture that silently fails to appear is a teacher
+        // pasting it three more times in front of a class.
         console.error("[Whiteboard] paste failed", err);
         onError?.(err.message || "That picture could not be shared");
       } finally {
