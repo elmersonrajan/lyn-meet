@@ -114,7 +114,7 @@ class Room {
     // `image` is a picture pasted onto the board, which the strokes are drawn
     // over. One per board: pasting again replaces it, which is what "paste"
     // means everywhere else.
-    this.boards = [{ id: "b1", strokes: [], image: null }];
+    this.boards = [{ id: "b1", strokes: [], image: null, document: null }];
     this.activeBoardId = "b1";
     this.boardSeq = 1;
     this.polls = [];
@@ -163,15 +163,29 @@ class Room {
       id: b.id,
       name: `Whiteboard ${index + 1}`,
       strokeCount: b.strokes.length,
-      hasImage: Boolean(b.image),
+      hasImage: Boolean(b.image || b.document),
     }));
   }
 
-  /** What a board looks like to a browser: its strokes and its picture. */
+  /**
+   * What a board looks like to a browser: its strokes, and whatever they are
+   * drawn over.
+   *
+   * A board shows a picture or a document, never both -- one page at a time is
+   * what a board is. Whichever arrives last replaces the other.
+   */
   boardContent(board = this.activeBoard()) {
     return {
       strokes: board.strokes,
       image: board.image ? { id: board.image.id, url: board.image.url } : null,
+      document: board.document
+        ? {
+            id: board.document.id,
+            url: board.document.url,
+            name: board.document.name,
+            page: board.document.page,
+          }
+        : null,
     };
   }
 
@@ -183,7 +197,7 @@ class Room {
     // moment late must not be able to hit a board that has taken the number of
     // the one it meant.
     this.boardSeq += 1;
-    const board = { id: `b${this.boardSeq}`, strokes: [], image: null };
+    const board = { id: `b${this.boardSeq}`, strokes: [], image: null, document: null };
     this.boards.push(board);
     this.activeBoardId = board.id;
     return board;
@@ -390,7 +404,15 @@ class Room {
       if (peer.role === "student" && source === "screen-audio") {
         throw new Error("Only staff can share sound from their screen");
       }
-      if (!["audio", "video", "screen", "screen-audio"].includes(source)) {
+      /**
+       * "stage" is the teacher's own tab, captured while a recording runs so
+       * the recording shows what the class was actually looking at. Nobody
+       * consumes it; it exists for the recorder.
+       */
+      if (peer.role === "student" && source === "stage") {
+        throw new Error("Only staff can publish the stage");
+      }
+      if (!["audio", "video", "screen", "screen-audio", "stage"].includes(source)) {
         throw new Error(`Unknown producer source "${source}"`);
       }
       log.action("produce", { peerId: peer.id, kind, source, role: peer.role });

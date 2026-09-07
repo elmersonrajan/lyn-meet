@@ -20,6 +20,7 @@ const { RECORDINGS_DIR } = require("./recording/cloudRecorder");
 const attendance = require("./attendance/attendanceLog");
 const attendanceDb = require("./attendance/attendanceDb");
 const boardImages = require("./whiteboard/boardImages");
+const documents = require("./whiteboard/documents");
 const { rooms } = require("./mediasoup/roomManager");
 const { createLogger } = require("./utils/logger");
 
@@ -302,6 +303,23 @@ async function main() {
       express.static(boardImages.DIR, { maxAge: "1h", immutable: true, extensions: false }),
     );
 
+    /**
+     * Documents shown on a whiteboard, fetched and rendered by every browser
+     * in the room. Signed in rather than staff: the students are the ones who
+     * have to read the page.
+     */
+    app.use(
+      "/documents",
+      (req, res, next) => {
+        if (!req.user && !authConfig.authDisabled) {
+          res.status(401).json({ ok: false, error: "Sign in to see this" });
+          return;
+        }
+        next();
+      },
+      express.static(documents.DIR, { maxAge: "1h", immutable: true, extensions: false }),
+    );
+
     app.post(
       "/api/recordings/chunk",
       requireStaff,
@@ -473,8 +491,10 @@ async function main() {
         if (published) log.warn("published recordings that had no row", { published });
       })
       .catch((err) => log.error("recording sweep failed", err.message));
-    // Pasted pictures are the pages of one lesson, not a library.
+    // Pasted pictures and opened documents are the pages of one lesson, not a
+    // library.
     boardImages.sweep();
+    documents.sweep();
 
     server.listen(PORT, HOST, () => {
       log.info(`backend listening on http://${HOST}:${PORT}`);

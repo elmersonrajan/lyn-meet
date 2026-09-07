@@ -15,3 +15,4 @@ backend/.env
 backend/recordings/
 backend/attendance/
 backend/board-images/
+backend/documents/

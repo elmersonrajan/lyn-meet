@@ -210,9 +210,20 @@ limit applies. One picture per board -- pasting again replaces it, and Clear
 takes it with the strokes. Pictures are swept after a day
 (`BOARD_IMAGE_MAX_AGE_HOURS`).
 
-**PDFs and Word documents are not pasteable** -- a canvas cannot hold a
-document. To put one in front of a class, open it and use **Play Video** to
-share that tab, or screenshot the page and paste that to annotate it.
+**Open a PDF or Word document on the board.** The document button on the board
+tools, or paste or drop the file. The file is stored once and **every browser
+renders it for itself** with pdf.js, a page at a time, with the teacher's page
+synchronised to the class -- so a page stays sharp at whatever size a student's
+screen is, a forty-page document costs one download rather than forty, and
+turning a page puts one number on the wire. Draw on it like anything else.
+
+Word documents are converted to PDF by LibreOffice on the server. Without
+`soffice` installed the teacher is told to save it as a PDF, rather than left
+waiting for a file that will never appear:
+
+```bash
+sudo dnf install libreoffice-writer   # or: apt install libreoffice-writer
+```
 
 **Playing a video: Play Video.** It shares the browser tab the video is in,
 picture and sound together, live. Chrome's picker has an audio tickbox that is
@@ -244,6 +255,22 @@ only an id.
 
 **Ending a session** now asks first. It removes everyone from the lesson and
 cannot be undone, and the button sits beside Leave.
+
+## What the recording contains
+
+Pressing **Record** captures the teacher's own browser tab and records that as
+the picture. The recording is then whatever the class was looking at: the
+whiteboard with its drawings, a pasted picture, a PDF or Word page, a screen
+share, a video, the camera tile -- all of it, arranged as it was on screen.
+
+The server used to rebuild the picture from the parts it understood: strokes
+re-drawn from the stroke list, the camera, a screen share. Anything it could
+not rebuild was simply missing from the video.
+
+Chrome asks the teacher to confirm the capture when they press Record. If they
+decline, the recording still happens -- the server falls back to assembling the
+board, the camera and any screen share, which is what it always did, and says
+so on screen.
 
 ## How much data a class costs
 

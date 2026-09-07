@@ -108,6 +108,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     initial: joinPayload.whiteboard || [],
     // A picture already pasted onto the board this browser is joining into.
     initialImage: joinPayload.boardImage || null,
+    // A document already open on the board this browser is joining into.
+    initialDocument: joinPayload.boardDocument || null,
     onError: showToast,
   });
 
@@ -367,12 +369,31 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       if (recording) {
         await emitAck("stop-recording", {});
         setRecording(false);
+        await media.stopStageCapture();
       } else {
+        /**
+         * The recording is a recording of this screen.
+         *
+         * The capture is published BEFORE the server is told to start, because
+         * the recorder decides what it is recording at the moment it starts:
+         * a stage arriving a second later would be a stage the recording never
+         * knew about.
+         *
+         * A teacher who declines the browser's prompt still gets a recording
+         * -- the server falls back to assembling the picture from the board,
+         * the camera and any screen share, which is what it always did.
+         */
+        const captured = await media.startStageCapture();
+        if (!captured) {
+          showToast("Recording the board and camera only — the screen was not shared");
+        }
         await emitAck("start-recording", {});
       }
     } catch (err) {
       console.error("[MeetingRoom] record toggle failed", err);
       setToast(err.message);
+      // Nothing is being recorded, so nothing should still be captured.
+      await media.stopStageCapture().catch(() => {});
     } finally {
       setRecBusy(false);
     }

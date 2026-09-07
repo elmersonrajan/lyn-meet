@@ -106,6 +106,7 @@ class CloudRecorder {
     this.mediaStartedAt = null;
 
     // Stream order inside the ingest file, needed by the render layout.
+    this.stageIndex = null;
     this.camIndex = null;
     this.screenIndex = null;
     this.hasAudio = false;
@@ -130,13 +131,28 @@ class CloudRecorder {
         throw new Error("Nothing to record — the teacher has no camera, mic or screen running");
       }
 
+      /**
+       * The stage: the teacher's own tab, captured by their browser.
+       *
+       * When it is there it becomes the picture, and everything the server
+       * would otherwise have rebuilt -- the board re-drawn from strokes, a
+       * screen share, the camera inset -- is already inside it, correctly,
+       * including the things the server cannot rebuild at all: a pasted
+       * diagram, a PDF page, a document. A teacher who declines the capture
+       * gets the assembled picture instead, which is what this always did.
+       */
+      const stagePeer = this.room.getStaff().find((p) => this.room.findProducer(p.id, "stage"));
+      const stageProducer = stagePeer ? this.room.findProducer(stagePeer.id, "stage") : null;
+
       const audio = audioProducer ? await this._attach(audioProducer, "audio") : null;
+      const stage = stageProducer ? await this._attach(stageProducer, "stage") : null;
       const cam = camProducer ? await this._attach(camProducer, "video") : null;
       const screen = screenProducer ? await this._attach(screenProducer, "screen") : null;
 
       this.hasAudio = Boolean(audio);
       // Video stream indexes within the output, in SDP order.
       let v = 0;
+      this.stageIndex = stage ? v++ : null;
       this.camIndex = cam ? v++ : null;
       this.screenIndex = screen ? v++ : null;
 
@@ -146,7 +162,7 @@ class CloudRecorder {
       this.livePath = path.join(RECORDINGS_DIR, `${this.id}_live.mkv`);
       this.logPath = path.join(RECORDINGS_DIR, `${this.id}_ffmpeg.log`);
 
-      fs.writeFileSync(this.sdpPath, buildSdp({ audio, cam, screen }), "utf8");
+      fs.writeFileSync(this.sdpPath, buildSdp({ audio, stage, cam, screen }), "utf8");
 
       const args = buildIngestArgs({
         sdpPath: this.sdpPath,
@@ -641,6 +657,9 @@ class CloudRecorder {
    */
   _writeBoardSnapshot() {
     try {
+      // The teacher's own screen is being captured: the board is already in
+      // that picture, correctly, along with everything the server cannot draw.
+      if (this.stageIndex != null) return;
       const at = Date.now();
       const signature = this._boardSignature();
       if (this.frames.length && signature === this.lastBoardSignature) {
@@ -768,6 +787,7 @@ class CloudRecorder {
       sdpPaths: [this.sdpPath],
       frameDir: this.frameDir,
       boardManifest: this._writeBoardManifest(),
+      stageIndex: this.stageIndex,
       camIndex: this.camIndex,
       screenIndex: this.screenIndex,
       hasAudio: this.hasAudio,

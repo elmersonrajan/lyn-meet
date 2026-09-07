@@ -1197,23 +1197,17 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 /* The calendar beside the register rather than above it: a coordinator moves
    between days repeatedly, so the days must stay on screen while a day's
    register is being read. */
+/* One column. There were two while a calendar sat beside the register; when
+   that went, the register was left in the 268px the calendar used to occupy
+   and the rest of the panel stood empty -- a meeting id wrapping one digit to
+   a line beside half a modal of nothing. */
 .att-body {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: 268px minmax(0, 1fr);
+  display: flex;
+  min-width: 0;
 }
-.att-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-
-
-
-
-/* A day a class was actually held. Everything else stays visible but inert, so
-   the grid still reads as a month while the days that matter stand out. */
-/* Only when a day held more than one class, so the usual day stays uncluttered. */
-
-
-/* Which of the day's classes is on screen, so the list and the register agree. */
+.att-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 1; }
 
 /* Report header: meeting identity travels with the data, not just the title. */
 .att-meta {
@@ -2342,3 +2336,48 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   color: var(--muted);
   font-size: 13px;
 }
+
+/* Which page of a document the class is on. Sits under the board tools, out of
+   the way of the drawing surface. */
+.board-pager {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: var(--shadow);
+  font-size: 12.5px;
+  color: var(--navy);
+  max-width: min(520px, 90%);
+}
+
+.board-pager-name {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.board-pager-count { min-width: 62px; text-align: center; color: var(--muted); }
+
+.board-pager button {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: #fff;
+  color: var(--navy);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.board-pager button:disabled { opacity: 0.4; cursor: default; }
+.board-pager button:hover:not(:disabled) { background: var(--tint); }

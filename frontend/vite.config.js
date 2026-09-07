@@ -32,6 +32,9 @@ export default defineConfig({
       // without an entry here they would be served index.html and the board
       // would show annotations over nothing.
       "/board-images": { target: "http://127.0.0.1:5000" },
+      // PDFs and converted Word documents shown on the board, fetched by every
+      // browser in the room.
+      "/documents": { target: "http://127.0.0.1:5000" },
       "/health": { target: "http://127.0.0.1:5000" },
       // Domain ownership proof for the mobile apps. Without this the SPA
       // answers it with index.html, Android's check fails silently, and every

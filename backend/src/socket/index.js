@@ -14,6 +14,7 @@ const { createLogger } = require("../utils/logger");
 const meetingLog = require("../utils/meetingLog");
 const attendance = require("../attendance/attendanceLog");
 const boardImages = require("../whiteboard/boardImages");
+const documents = require("../whiteboard/documents");
 const {
   APPRECIATIONS,
   buildMedia,
@@ -178,6 +179,10 @@ function joinAck(room, peer, extra = {}) {
     boards: room.boardTabs(),
     activeBoardId: room.activeBoardId,
     boardImage: room.boardContent().image,
+    boardDocument: room.boardContent().document,
+    // Whether this server can turn a Word file into something a browser can
+    // show, so the teacher is told before they try rather than after.
+    canConvertWord: documents.canConvertWord(),
     // Someone joining halfway through a clip arrives at the same point in the
     // same video as everybody else, rather than at a blank stage.
     media: mediaPublic(room),
@@ -684,6 +689,7 @@ function attachSocketHandlers(io) {
         // "Clear" means clear. A pasted picture left behind would be a board
         // that says it is empty and is not.
         board.image = null;
+        board.document = null;
         io.to(room.id).emit("whiteboard-clear", { boardId: board.id });
         io.to(room.id).emit("whiteboard-boards", boardsPublic(room));
         ack(callback, { ok: true });
@@ -770,6 +776,8 @@ function attachSocketHandlers(io) {
 
         const board = room.activeBoard();
         board.image = stored;
+        // A board shows one thing at a time.
+        board.document = null;
         log.action("whiteboard-image", { roomId: room.id, boardId: board.id, id: stored.id });
 
         io.to(room.id).emit("whiteboard-switched", {
@@ -779,6 +787,66 @@ function attachSocketHandlers(io) {
         ack(callback, { ok: true, url: stored.url });
       } catch (err) {
         log.error("whiteboard-image failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    /**
+     * A document put on the board: a PDF, or a Word file converted to one.
+     *
+     * The file is stored once and every browser renders it for itself, which
+     * is the opposite of how a pasted picture travels -- and right for the
+     * opposite reason. A picture is one frame, cheapest as pixels; a document
+     * is dozens of pages, cheapest as the file it already is, and rendered
+     * locally it stays sharp on whatever screen a student happens to have.
+     *
+     * Over the socket, not an upload: the body-size limit on the proxy in
+     * front of this server does not apply to a websocket frame.
+     */
+    socket.on("whiteboard-document", async ({ bytes, name, type }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        requireTeacher(peer);
+        const stored = await documents.save(room.id, { bytes, name, type });
+
+        const board = room.activeBoard();
+        board.document = { ...stored, page: 1 };
+        // A board shows one thing at a time.
+        board.image = null;
+        log.action("whiteboard-document", { roomId: room.id, boardId: board.id, id: stored.id });
+
+        io.to(room.id).emit("whiteboard-switched", {
+          ...boardsPublic(room),
+          ...room.boardContent(board),
+        });
+        ack(callback, { ok: true, url: stored.url, name: stored.name });
+      } catch (err) {
+        log.error("whiteboard-document failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    /**
+     * Turning a page, for everybody.
+     *
+     * A page number rather than the document: the class already has the file,
+     * and re-sending the strokes with every page turn would put a whole board
+     * on the wire to move one page.
+     */
+    socket.on("whiteboard-document-page", ({ page }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        requireTeacher(peer);
+        const board = room.activeBoard();
+        if (!board.document) throw new Error("There is no document on this board");
+        const wanted = Math.max(1, Math.min(9999, Math.floor(Number(page) || 1)));
+        board.document.page = wanted;
+        io.to(room.id).emit("whiteboard-page", { boardId: board.id, page: wanted });
+        ack(callback, { ok: true, page: wanted });
+      } catch (err) {
+        log.error("whiteboard-document-page failed", err);
         ack(callback, { ok: false, error: err.message });
       }
     });
