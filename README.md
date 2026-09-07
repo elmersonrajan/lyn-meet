@@ -196,6 +196,24 @@ teacher can add or switch, and switching moves the whole class: the strokes
 travel with the switch, so a tab change, a late join and a reconnect all end in
 the same picture. The recording follows whichever board the class is on.
 
+**Paste a picture onto a whiteboard.** Ctrl+V, or drop the file on the board.
+Teacher only, and it appears for the whole class under the strokes, so the
+picture is the page and the drawing is the working on it. A diagram, a photo of
+a page, a screenshot of a PDF or a Word document -- anything the browser can
+decode as an image.
+
+The browser scales it to the size of a board frame and sends **raw pixels**,
+not a file: the server composites this into the class recording and its frame
+renderer has no image decoder, so nothing here parses a format a client chose.
+It travels over the socket rather than as an upload, which is why no proxy body
+limit applies. One picture per board -- pasting again replaces it, and Clear
+takes it with the strokes. Pictures are swept after a day
+(`BOARD_IMAGE_MAX_AGE_HOURS`).
+
+**PDFs and Word documents are not pasteable** -- a canvas cannot hold a
+document. To put one in front of a class, open it and use **Play Video** to
+share that tab, or screenshot the page and paste that to annotate it.
+
 **Playing a video: Play Video.** It shares the browser tab the video is in,
 picture and sound together, live. Chrome's picker has an audio tickbox that is
 easy to miss and a silent video is the failure this feature exists to avoid, so

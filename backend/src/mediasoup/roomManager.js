@@ -111,7 +111,10 @@ class Room {
      * time -- the class watches whichever the teacher is on, which is what
      * makes a tab switch meaningful rather than a private view.
      */
-    this.boards = [{ id: "b1", strokes: [] }];
+    // `image` is a picture pasted onto the board, which the strokes are drawn
+    // over. One per board: pasting again replaces it, which is what "paste"
+    // means everywhere else.
+    this.boards = [{ id: "b1", strokes: [], image: null }];
     this.activeBoardId = "b1";
     this.boardSeq = 1;
     this.polls = [];
@@ -160,7 +163,16 @@ class Room {
       id: b.id,
       name: `Whiteboard ${index + 1}`,
       strokeCount: b.strokes.length,
+      hasImage: Boolean(b.image),
     }));
+  }
+
+  /** What a board looks like to a browser: its strokes and its picture. */
+  boardContent(board = this.activeBoard()) {
+    return {
+      strokes: board.strokes,
+      image: board.image ? { id: board.image.id, url: board.image.url } : null,
+    };
   }
 
   addBoard() {
@@ -171,7 +183,7 @@ class Room {
     // moment late must not be able to hit a board that has taken the number of
     // the one it meant.
     this.boardSeq += 1;
-    const board = { id: `b${this.boardSeq}`, strokes: [] };
+    const board = { id: `b${this.boardSeq}`, strokes: [], image: null };
     this.boards.push(board);
     this.activeBoardId = board.id;
     return board;

@@ -5,9 +5,31 @@ const COLORS = ["#163a6b", "#d32f2f", "#1b8a4a", "#e08600", "#111827"];
 
 export default function Whiteboard({ board }) {
   const erasing = board.tool === "eraser";
+  const [dragging, setDragging] = React.useState(false);
+
+  /**
+   * A picture can arrive by being dropped on the board as well as by Ctrl+V.
+   * Both end in the same place; dropping is simply what somebody does with a
+   * file they have in a folder rather than on a clipboard.
+   */
+  const onDragOver = (e) => {
+    if (!board.allowed) return;
+    e.preventDefault();
+    setDragging(true);
+  };
 
   return (
-    <>
+    <div
+      className={`board-drop ${dragging ? "over" : ""}`}
+      onDragOver={onDragOver}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => {
+        if (!board.allowed) return;
+        e.preventDefault();
+        setDragging(false);
+        board.onDropFiles?.(e.dataTransfer);
+      }}
+    >
       <canvas
         ref={board.canvasRef}
         onMouseDown={board.onDown}
@@ -76,6 +98,11 @@ export default function Whiteboard({ board }) {
           </button>
         </div>
       ) : null}
-    </>
+
+      {/* Only while something is on its way: a permanent instruction on the
+          board would be another thing to read every lesson. */}
+      {board.pasting ? <div className="board-busy">Sharing the picture…</div> : null}
+      {dragging ? <div className="board-dropzone">Drop the picture onto the board</div> : null}
+    </div>
   );
 }

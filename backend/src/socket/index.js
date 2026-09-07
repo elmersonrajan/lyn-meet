@@ -13,6 +13,7 @@ const {
 const { createLogger } = require("../utils/logger");
 const meetingLog = require("../utils/meetingLog");
 const attendance = require("../attendance/attendanceLog");
+const boardImages = require("../whiteboard/boardImages");
 const {
   APPRECIATIONS,
   buildMedia,
@@ -176,6 +177,7 @@ function joinAck(room, peer, extra = {}) {
     whiteboard: room.whiteboard,
     boards: room.boardTabs(),
     activeBoardId: room.activeBoardId,
+    boardImage: room.boardContent().image,
     // Someone joining halfway through a clip arrives at the same point in the
     // same video as everybody else, rather than at a blank stage.
     media: mediaPublic(room),
@@ -677,8 +679,13 @@ function attachSocketHandlers(io) {
         const peer = room?.peers.get(socket.data.peerId);
         // Clearing is drawing — same restriction as strokes.
         requireTeacher(peer);
-        room.whiteboard = [];
-        io.to(room.id).emit("whiteboard-clear", { boardId: room.activeBoardId });
+        const board = room.activeBoard();
+        board.strokes = [];
+        // "Clear" means clear. A pasted picture left behind would be a board
+        // that says it is empty and is not.
+        board.image = null;
+        io.to(room.id).emit("whiteboard-clear", { boardId: board.id });
+        io.to(room.id).emit("whiteboard-boards", boardsPublic(room));
         ack(callback, { ok: true });
       } catch (err) {
         log.error("whiteboard-clear failed", err);
@@ -704,7 +711,7 @@ function attachSocketHandlers(io) {
         log.action("whiteboard-add", { roomId: room.id, boardId: board.id, count: room.boards.length });
         io.to(room.id).emit("whiteboard-switched", {
           ...boardsPublic(room),
-          strokes: board.strokes,
+          ...room.boardContent(board),
         });
         ack(callback, { ok: true, boardId: board.id });
       } catch (err) {
@@ -730,11 +737,48 @@ function attachSocketHandlers(io) {
         log.action("whiteboard-select", { roomId: room.id, boardId: board.id });
         io.to(room.id).emit("whiteboard-switched", {
           ...boardsPublic(room),
-          strokes: board.strokes,
+          ...room.boardContent(board),
         });
         ack(callback, { ok: true });
       } catch (err) {
         log.error("whiteboard-select failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    /**
+     * A picture pasted onto the live board.
+     *
+     * What arrives is raw pixels, already scaled by the browser to exactly a
+     * board frame -- not a PNG or a JPEG. The server has to composite this
+     * into the class recording, and the frame renderer has no image decoder in
+     * it; pixels mean there is no file format here that a client chose and
+     * nothing on this side to get wrong.
+     *
+     * It comes over the socket rather than as an upload because a websocket
+     * frame is not subject to the body-size limit on the proxy in front of
+     * this server, which is what refused every video upload before it.
+     */
+    socket.on("whiteboard-image", ({ pixels }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        // Pasting is drawing: the same restriction as a stroke.
+        requireTeacher(peer);
+        const buffer = Buffer.isBuffer(pixels) ? pixels : Buffer.from(pixels || []);
+        const stored = boardImages.save(room.id, buffer);
+
+        const board = room.activeBoard();
+        board.image = stored;
+        log.action("whiteboard-image", { roomId: room.id, boardId: board.id, id: stored.id });
+
+        io.to(room.id).emit("whiteboard-switched", {
+          ...boardsPublic(room),
+          ...room.boardContent(board),
+        });
+        ack(callback, { ok: true, url: stored.url });
+      } catch (err) {
+        log.error("whiteboard-image failed", err);
         ack(callback, { ok: false, error: err.message });
       }
     });
@@ -760,7 +804,7 @@ function attachSocketHandlers(io) {
         });
         io.to(room.id).emit("whiteboard-switched", {
           ...boardsPublic(room),
-          strokes: active.strokes,
+          ...room.boardContent(active),
         });
         ack(callback, { ok: true, activeBoardId: active.id });
       } catch (err) {

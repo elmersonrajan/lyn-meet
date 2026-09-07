@@ -2309,3 +2309,36 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   background: transparent;
   cursor: default;
 }
+
+/* The board accepts a picture dropped onto it as well as pasted. */
+.board-drop {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.board-dropzone,
+.board-busy {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--navy);
+}
+
+.board-dropzone {
+  border: 2px dashed var(--line);
+  border-radius: 10px;
+  background: rgba(227, 236, 250, 0.75);
+}
+
+.board-busy {
+  align-content: start;
+  justify-content: center;
+  padding-top: 16px;
+  color: var(--muted);
+  font-size: 13px;
+}

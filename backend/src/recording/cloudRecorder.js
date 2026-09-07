@@ -3,6 +3,7 @@ const path = require("path");
 const { spawn } = require("child_process");
 const { createLogger } = require("../utils/logger");
 const { writeBoardFrame } = require("./whiteboardFrame");
+const boardImages = require("../whiteboard/boardImages");
 const { buildSdp, buildIngestArgs } = require("./ffmpegArgs");
 const { RECORDINGS_DIR, ensureDir, fileSize } = require("./paths");
 const renderQueue = require("./renderQueue");
@@ -623,7 +624,11 @@ class CloudRecorder {
     // boards mid-lesson: two pages that happen to hold the same number of
     // strokes are still two different pictures, and the recording has to show
     // whichever one the class was actually looking at.
-    return `${this.room.activeBoardId}:${strokes.length}:${strokes[strokes.length - 1]?.at || 0}`;
+    // The pasted picture is part of the signature too: a diagram arriving on
+    // an empty board changes nothing about the strokes, and without this the
+    // recording would reuse the blank frame it wrote a moment earlier.
+    const image = this.room.activeBoard?.().image?.id || "";
+    return `${this.room.activeBoardId}:${image}:${strokes.length}:${strokes[strokes.length - 1]?.at || 0}`;
   }
 
   /**
@@ -643,7 +648,12 @@ class CloudRecorder {
         return;
       }
       const name = `board_${String(this.frameIndex).padStart(6, "0")}.png`;
-      writeBoardFrame(path.join(this.frameDir, name), this.room.whiteboard || []);
+      const image = this.room.activeBoard?.().image;
+      writeBoardFrame(
+        path.join(this.frameDir, name),
+        this.room.whiteboard || [],
+        image ? boardImages.pixels(image.id) : null,
+      );
       this.frameIndex += 1;
       this.lastBoardSignature = signature;
       this.frames.push({ name, at });
