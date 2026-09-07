@@ -72,7 +72,27 @@ export function playApplause({ volume = 0.22, claps = 34, durationSec = 2.2 } = 
     const buffer = buildClap(ctx);
     const master = ctx.createGain();
     master.gain.value = volume;
-    master.connect(ctx.destination);
+
+    /**
+     * A limiter on the way out, so alignment cannot become distortion.
+     *
+     * Each clap peaks in its first millisecond. Four of them landing together
+     * reaches about 0.88 of full scale, which is fine; six would pass 1.0, and
+     * everything past that is clipped by the browser into something that
+     * sounds broken. Nothing here can damage a speaker -- the output is
+     * clamped and the volume knob still governs the power -- but a burst of
+     * digital clipping over a teacher's voice is worth three lines of code to
+     * avoid.
+     */
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -6;
+    limiter.knee.value = 3;
+    limiter.ratio.value = 12;
+    limiter.attack.value = 0.003;
+    limiter.release.value = 0.15;
+
+    master.connect(limiter);
+    limiter.connect(ctx.destination);
 
     const now = ctx.currentTime;
     for (let i = 0; i < claps; i += 1) {
@@ -117,6 +137,7 @@ export function playApplause({ volume = 0.22, claps = 34, durationSec = 2.2 } = 
     setTimeout(() => {
       try {
         master.disconnect();
+        limiter.disconnect();
       } catch (err) {
         console.warn("[applause] disconnect failed", err.message);
       }
