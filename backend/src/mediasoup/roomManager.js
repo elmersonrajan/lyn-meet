@@ -2,6 +2,7 @@ const config = require("../config/mediasoup");
 const { createRouter } = require("./workerManager");
 const { CloudRecorder } = require("../recording/cloudRecorder");
 const attendance = require("../attendance/attendanceLog");
+const { mediaProfile } = require("../config/media");
 const { createLogger } = require("../utils/logger");
 
 const log = createLogger("RoomManager");
@@ -276,6 +277,20 @@ class Room {
       log.action("createWebRtcTransport", { roomId: this.id, peerId: peer.id });
       const transport = await this.router.createWebRtcTransport(config.webRtcTransport);
       peer.transports.set(transport.id, transport);
+
+      /**
+       * A ceiling the browser cannot talk its way past.
+       *
+       * The encodings asked for at produce time are a request; this is the
+       * limit. One teacher on a fast connection could otherwise send several
+       * megabits of camera into a room where every student pays to receive it.
+       * Meaningless on a receive transport, where it is simply ignored.
+       */
+      try {
+        await transport.setMaxIncomingBitrate(mediaProfile().maxIncomingBitrate);
+      } catch (err) {
+        log.warn("could not cap the incoming bitrate", err.message);
+      }
 
       transport.on("dtlsstatechange", (state) => {
         log.info("dtlsstatechange", { transportId: transport.id, state, peerId: peer.id });

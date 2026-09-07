@@ -92,6 +92,9 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     role: session.role,
     peerId: session.peer?.id,
     enabled: true,
+    // What to capture and how much to spend sending it, decided by the server
+    // so it can be tuned for the connections the teachers actually have.
+    profile: joinPayload.mediaProfile,
   });
 
   const board = useWhiteboard({
