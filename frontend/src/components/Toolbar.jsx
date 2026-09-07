@@ -17,7 +17,6 @@ import {
   IconThumbUp,
   IconThumbDown,
   IconTrash,
-  IconStar,
 } from "./Icons.jsx";
 
 export default function Toolbar({
@@ -235,12 +234,15 @@ export default function Toolbar({
         than for running it, so it gets its own group and its own colour
         instead of four more grey buttons in the row.
       */}
+      {/*
+        Forces what follows onto a new line. Only rendered for staff, who are
+        the only people with anything after it -- for a student it would leave
+        Leave alone on a row of its own, looking like a mistake.
+      */}
+      {staff ? <span className="tbreak" aria-hidden="true" /> : null}
+
       {staff ? (
         <div className="tgroup praise" role="group" aria-label="Appreciate a student">
-          <span className="tgroup-label">
-            <IconStar size={14} />
-            Praise
-          </span>
           {(appreciations || []).map((award) => (
             <button
               key={award.id}

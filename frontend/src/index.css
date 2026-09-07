@@ -2081,21 +2081,20 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   padding: 4px 8px;
 }
 
-.tgroup.praise + .tgroup,
-.tgroup.praise { border-left-width: 1px; }
-
-.tgroup-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 6px 0 2px;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #8a5200;
-  white-space: nowrap;
+/* A zero-height full-width item: everything after it wraps to the next line.
+   Praise belongs on a row of its own -- it is not part of running the meeting,
+   and in one long row it crowded out the controls that are. */
+.tbreak {
+  flex-basis: 100%;
+  height: 0;
+  margin: 0;
 }
+
+/* No divider at the start of a row: a border-left against nothing reads as a
+   stray mark rather than a separator. Praise is exempt -- it is a bordered
+   card rather than a group with a divider, and stripping one side of it would
+   leave a three-sided box. */
+.tbreak + .tgroup:not(.praise) { border-left: 0; padding-left: 4px; }
 
 .tbtn.praise {
   min-width: 74px;
