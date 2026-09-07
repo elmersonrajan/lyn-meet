@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { playApplause } from "../services/applause.js";
 
 /**
  * Praise, across everybody's screen at once.
@@ -52,6 +53,9 @@ export default function Appreciation({ award, onDone }) {
   useEffect(() => {
     if (!award) return undefined;
     setLeaving(false);
+    // A room bursting into applause, which is the half of praise that a
+    // silent screen cannot carry.
+    playApplause();
     // Fades before it goes, so the meeting comes back rather than snapping back.
     const fade = setTimeout(() => setLeaving(true), VISIBLE_MS - 600);
     const done = setTimeout(() => doneRef.current?.(), VISIBLE_MS);

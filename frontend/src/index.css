@@ -690,8 +690,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .tbtn {
   position: relative;
-  min-width: 82px;
-  height: 60px;
+  /* Narrower than it was: four groups have to share one line, and the labels
+     under these icons were never the reason anybody found them. */
+  min-width: 70px;
+  height: 56px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: #fff;
@@ -2061,14 +2063,14 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .tgroup {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   padding: 4px;
-  border-radius: 14px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--tint);
   /* The whole cluster moves to the next line together rather than breaking up. */
   flex: 0 0 auto;
 }
-
-.tgroup + .tgroup { border-left: 1px solid var(--border); padding-left: 10px; }
 
 .tgroup:empty { display: none; }
 
@@ -2081,24 +2083,15 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   padding: 4px 8px;
 }
 
-/* A zero-height full-width item: everything after it wraps to the next line.
-   Praise belongs on a row of its own -- it is not part of running the meeting,
-   and in one long row it crowded out the controls that are. */
-.tbreak {
-  flex-basis: 100%;
-  height: 0;
-  margin: 0;
-}
-
-/* No divider at the start of a row: a border-left against nothing reads as a
-   stray mark rather than a separator. Praise is exempt -- it is a bordered
-   card rather than a group with a divider, and stripping one side of it would
-   leave a three-sided box. */
-.tbreak + .tgroup:not(.praise) { border-left: 0; padding-left: 4px; }
+/* Every group is a card of the same shape, so the toolbar reads as four
+   clusters on one line rather than fourteen buttons in a queue. They are
+   compact enough to fit that line on a laptop; on anything narrower a whole
+   card wraps, never half of one. */
 
 .tbtn.praise {
-  min-width: 74px;
-  gap: 4px;
+  min-width: 66px;
+  gap: 2px;
+  padding: 0 4px;
   border-color: #f0d9ae;
   background: #fff;
   color: #8a5200;
