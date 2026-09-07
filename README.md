@@ -252,10 +252,21 @@ for a camera pointed at handwriting.
 In/out times and duration per person. The Attendance button is visible to the
 **coordinator only** — not to teachers.
 
-- `GET /api/attendance` — meetings with a log
-- `GET /api/attendance/<meetingId>` — report
+**Only the meeting you are in.** Every endpoint below checks that the caller is
+currently a participant of the meeting they are asking about, and refuses with
+403 otherwise. Being staff is not enough: a coordinator could previously read
+the register of every meeting this server had ever run, other people's classes
+included. There is no date picker either — the register of a class that
+finished last week lives on the platform. The check is server-side, because
+hiding a picker stops browsing and does not stop a typed URL.
+
+- `GET /api/attendance` — the meetings the caller is in
+- `GET /api/attendance/<meetingId>` — report for the live day
 - `GET /api/attendance/<meetingId>/csv` — spreadsheet download
-- Raw event log: `backend/attendance/<meetingId>.jsonl`
+- `GET /api/attendance/<meetingId>/log` — the readable event log
+- Raw event log: `backend/attendance/<meetingId>.jsonl` (append-only, never
+  deleted, and still the source every report and every database row is built
+  from)
 
 A drop and rejoin counts as two sessions and the disconnected gap is excluded
 from the total, so nobody is credited for time they were away. Only meetings
