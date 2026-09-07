@@ -164,19 +164,62 @@ async function main() {
       }
     });
 
-    app.get("/api/attendance", requireStaff, (_req, res) => {
+    /**
+     * Attendance is for the class you are in, and only that class.
+     *
+     * Staff are staff everywhere, so being a coordinator was enough to read
+     * the register of every meeting this server had ever run -- other people's
+     * classes included, and every day of them. The rule now is presence:
+     * whoever asks has to be in the meeting they are asking about.
+     *
+     * Enforced here rather than in the panel. Hiding a picker stops somebody
+     * browsing; it does not stop anybody typing a meeting id into the address
+     * bar, and these are children's names and movements.
+     */
+    const inMeeting = (user, meetingId) => {
+      const room = rooms.get(String(meetingId || ""));
+      const email = String(user?.email || "").trim().toLowerCase();
+      if (!room || !email) return false;
+      return [...room.peers.values()].some(
+        (peer) => String(peer.email || "").trim().toLowerCase() === email,
+      );
+    };
+
+    const requireInMeeting = (req, res, next) => {
+      if (authConfig.authDisabled || inMeeting(req.user, req.params.meetingId)) return next();
+      log.warn("attendance refused — not in that meeting", {
+        email: req.user?.email,
+        meetingId: req.params.meetingId,
+      });
+      return res.status(403).json({
+        ok: false,
+        error: "You can only see the attendance of a meeting you are in",
+      });
+    };
+
+    /**
+     * The meetings the caller may look at, which is the ones they are in.
+     *
+     * This used to list every meeting-day on disk -- the whole term's
+     * timetable, answering a question nobody had asked.
+     */
+    app.get("/api/attendance", requireStaff, (req, res) => {
       try {
-        res.json({ ok: true, meetings: attendance.listMeetings() });
+        const meetings = attendance
+          .listMeetings()
+          .filter((m) => authConfig.authDisabled || inMeeting(req.user, m.meetingId));
+        res.json({ ok: true, meetings });
       } catch (err) {
         log.error("/api/attendance failed", err);
         res.status(500).json({ ok: false, error: err.message });
       }
     });
 
-    // ?date=DD-MM-YYYY selects one day; omitted, the most recent day is used.
-    app.get("/api/attendance/:meetingId", requireStaff, (req, res) => {
+    // The live day only. The register of a class that finished last week
+    // belongs on the platform, not in this panel.
+    app.get("/api/attendance/:meetingId", requireStaff, requireInMeeting, (req, res) => {
       try {
-        const report = attendance.buildReport(req.params.meetingId, { date: req.query.date });
+        const report = attendance.buildReport(req.params.meetingId);
         res.json({ ok: true, report });
       } catch (err) {
         log.error("/api/attendance/:meetingId failed", err);
@@ -184,11 +227,12 @@ async function main() {
       }
     });
 
-    // Human-readable rendering of the raw event log. Opens in a browser as
-    // plain text; ?date=DD-MM-YYYY narrows it to one day.
-    app.get("/api/attendance/:meetingId/log", requireStaff, (req, res) => {
+    // Human-readable rendering of the raw event log for the meeting in hand.
+    // Opens in a browser as plain text.
+    app.get("/api/attendance/:meetingId/log", requireStaff, requireInMeeting, (req, res) => {
       try {
-        const text = attendance.toText(req.params.meetingId, { date: req.query.date });
+        const { meetingDate } = attendance.buildReport(req.params.meetingId);
+        const text = attendance.toText(req.params.meetingId, { date: meetingDate });
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.send(text);
       } catch (err) {
@@ -197,9 +241,9 @@ async function main() {
       }
     });
 
-    app.get("/api/attendance/:meetingId/csv", requireStaff, (req, res) => {
+    app.get("/api/attendance/:meetingId/csv", requireStaff, requireInMeeting, (req, res) => {
       try {
-        const report = attendance.buildReport(req.params.meetingId, { date: req.query.date });
+        const report = attendance.buildReport(req.params.meetingId);
         const day = String(report.meetingDate || "").replace(/-/g, "");
         const name = `attendance_${attendance.safeId(req.params.meetingId)}${day ? `_${day}` : ""}.csv`;
         res.setHeader("Content-Type", "text/csv; charset=utf-8");

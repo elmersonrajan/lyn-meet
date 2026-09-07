@@ -1,47 +1,32 @@
 import React, { useCallback, useEffect, useState } from "react";
-import AttendanceCalendar from "./AttendanceCalendar.jsx";
 import { IconClipboard, IconClose, IconDownload, IconRefresh } from "./Icons.jsx";
 
 const ROLE_LABEL = { teacher: "Teacher", coordinator: "Coordinator", student: "Student" };
 
 export default function AttendancePanel({ open, meetingId, onClose, onError }) {
-  const [selectedId, setSelectedId] = useState(meetingId);
-  // null means "the most recent day", which is what the live meeting is.
-  const [selectedDate, setSelectedDate] = useState(null);
-  const [meetings, setMeetings] = useState([]);
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(null);
 
-  // Only today's own meeting has durations that keep advancing.
-  const isLive = selectedId === meetingId && selectedDate == null;
-
-  // Reset to the live meeting whenever the panel is reopened.
   useEffect(() => {
-    if (open) {
-      setSelectedId(meetingId);
-      setSelectedDate(null);
-      setExpanded(null);
-    }
+    if (open) setExpanded(null);
   }, [open, meetingId]);
 
-  const loadMeetings = useCallback(async () => {
-    try {
-      const res = await fetch("/api/attendance");
-      const body = await res.json();
-      if (!res.ok || body.ok === false) throw new Error(body.error || `HTTP ${res.status}`);
-      setMeetings(body.meetings || []);
-    } catch (err) {
-      console.error("[Attendance] meeting list failed", err);
-    }
-  }, []);
-
+  /**
+   * One meeting, one day: the class this person is currently in.
+   *
+   * There used to be a calendar here and a list of every meeting-day the
+   * server had on disk, which made a coordinator's Attendance button a way
+   * into other people's classes for the whole term. The register of a class
+   * that finished last week belongs on the platform, where the rest of the
+   * term's attendance already lives. The server enforces this too -- the panel
+   * having no picker is not what stops anybody.
+   */
   const loadReport = useCallback(async () => {
-    if (!selectedId) return;
+    if (!meetingId) return;
     setLoading(true);
     try {
-      const q = selectedDate ? `?date=${encodeURIComponent(selectedDate)}` : "";
-      const res = await fetch(`/api/attendance/${encodeURIComponent(selectedId)}${q}`);
+      const res = await fetch(`/api/attendance/${encodeURIComponent(meetingId)}`);
       const body = await res.json();
       if (!res.ok || body.ok === false) throw new Error(body.error || `HTTP ${res.status}`);
       setReport(body.report);
@@ -51,45 +36,16 @@ export default function AttendancePanel({ open, meetingId, onClose, onError }) {
     } finally {
       setLoading(false);
     }
-  }, [selectedId, selectedDate, onError]);
+  }, [meetingId, onError]);
 
   useEffect(() => {
     if (!open) return undefined;
-    loadMeetings();
     loadReport();
-    if (!isLive) return undefined;
+    // The durations of a class in progress keep advancing, so the register is
+    // re-read while the panel is open.
     const id = setInterval(loadReport, 15000);
     return () => clearInterval(id);
-  }, [open, isLive, loadMeetings, loadReport]);
-
-  /**
-   * A day was chosen on the calendar, or one class within that day.
-   *
-   * Choosing a day with a single class opens it straight away — waiting for a
-   * second click to show the one thing that could be meant is just friction.
-   * A day with several opens the first and lists the rest to switch between.
-   */
-  const pickDate = useCallback(
-    (date, meeting) => {
-      setExpanded(null);
-      if (!date) {
-        setSelectedId(meetingId);
-        setSelectedDate(null);
-        return;
-      }
-      // Earliest first, matching the order the day's classes are listed in.
-      // The server sends newest first, so taking its first entry would open the
-      // last class of the day while the list showed the first — the report and
-      // the list would disagree about which one was selected.
-      const onDay = meetings
-        .filter((m) => m.date === date)
-        .sort((a, b) => a.startedAt - b.startedAt);
-      const chosen = meeting || onDay[0];
-      setSelectedDate(date);
-      if (chosen) setSelectedId(chosen.meetingId);
-    },
-    [meetings, meetingId],
-  );
+  }, [open, loadReport]);
 
   if (!open) return null;
 
@@ -105,24 +61,17 @@ export default function AttendancePanel({ open, meetingId, onClose, onError }) {
             Attendance
           </h3>
           <div className="att-actions">
-            <button
-              type="button"
-              className={`att-live-btn ${isLive ? "on" : ""}`}
-              onClick={() => pickDate(null)}
-              title="Back to the class running now"
-            >
+            <span className="att-live-badge" title="The class running now">
               <span className="att-dot on" />
               Live
-            </button>
+            </span>
             <button type="button" onClick={loadReport} title="Refresh" disabled={loading}>
               <IconRefresh size={15} />
               {loading ? "…" : "Refresh"}
             </button>
             <a
               className="att-dl"
-              href={`/api/attendance/${encodeURIComponent(selectedId || "")}/csv${
-                selectedDate ? `?date=${encodeURIComponent(selectedDate)}` : ""
-              }`}
+              href={`/api/attendance/${encodeURIComponent(meetingId || "")}/csv`}
               title="Download as CSV"
             >
               <IconDownload size={15} />
@@ -130,9 +79,7 @@ export default function AttendancePanel({ open, meetingId, onClose, onError }) {
             </a>
             <a
               className="att-dl"
-              href={`/api/attendance/${encodeURIComponent(selectedId || "")}/log${
-                selectedDate ? `?date=${encodeURIComponent(selectedDate)}` : ""
-              }`}
+              href={`/api/attendance/${encodeURIComponent(meetingId || "")}/log`}
               target="_blank"
               rel="noreferrer"
               title="Open the readable event log"
@@ -147,13 +94,6 @@ export default function AttendancePanel({ open, meetingId, onClose, onError }) {
         </header>
 
         <div className="att-body">
-          <AttendanceCalendar
-            meetings={meetings}
-            selectedDate={selectedDate}
-            selectedId={selectedId}
-            onPickDate={pickDate}
-          />
-
           <div className="att-main">
             {report ? (
               <div className="att-meta">
@@ -303,11 +243,7 @@ export default function AttendancePanel({ open, meetingId, onClose, onError }) {
                 </table>
               ) : (
                 <p className="dock-empty">
-                  {loading
-                    ? "Loading…"
-                    : selectedDate
-                      ? "No attendance recorded for that class."
-                      : "No attendance recorded for this meeting yet."}
+                  {loading ? "Loading…" : "No attendance recorded for this meeting yet."}
                 </p>
               )}
             </div>
@@ -316,8 +252,8 @@ export default function AttendancePanel({ open, meetingId, onClose, onError }) {
 
         <footer className="att-foot">
           All times {tz} ({report?.timezone || "Asia/Kolkata"}). Durations exclude time spent
-          disconnected — a drop and rejoin counts as two sessions. People are matched by name, so
-          duplicate names merge into one row.
+          disconnected — a drop and rejoin counts as two sessions. This is the class you are in;
+          earlier classes are on the platform.
           {report?.generatedLabel ? ` Generated ${report.generatedLabel}.` : ""}
         </footer>
       </section>
