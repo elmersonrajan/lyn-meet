@@ -14,3 +14,4 @@ frontend/cert.pem
 backend/.env
 backend/recordings/
 backend/attendance/
+backend/board-images/

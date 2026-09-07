@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { emitAck } from "../services/socket";
+import { imageFrom, toBoardPixels } from "../services/boardImage";
 
 /** Map stroke point onto CSS pixel space (nx/ny preferred). */
 function mapPoint(p, cssW, cssH, stroke) {
@@ -42,7 +43,14 @@ function strokePath(ctx, points, cssW, cssH, stroke) {
  * canDraw = teacher only. Coordinators supervise and may change the stage or
  * share a screen, but do not write on the board; the server enforces this too.
  */
-export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = [] }) {
+export function useWhiteboard({
+  socket,
+  canDraw = false,
+  isTeacher,
+  initial = [],
+  initialImage = null,
+  onError,
+}) {
   // Back-compat: older callers passed isTeacher
   const allowed = canDraw || Boolean(isTeacher);
 
@@ -53,6 +61,14 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
   const [color, setColor] = useState("#163a6b");
   const [tool, setTool] = useState("pen");
   const strokesRef = useRef(initial || []);
+  /**
+   * The picture pasted onto this board, decoded and ready to draw.
+   *
+   * Held as a loaded <img> rather than a URL so a redraw -- which happens on
+   * every stroke and every resize -- never waits on the network.
+   */
+  const imageRef = useRef(null);
+  const [pasting, setPasting] = useState(false);
 
   const redraw = useCallback(() => {
     try {
@@ -69,6 +85,18 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      // Underneath everything: the strokes are the working, the picture is the
+      // page. It arrives already fitted to the board's proportions, so it is
+      // drawn to fill the canvas rather than fitted a second time.
+      const image = imageRef.current;
+      if (image) {
+        try {
+          ctx.drawImage(image, 0, 0, cssW, cssH);
+        } catch (err) {
+          console.error("[Whiteboard] could not draw the pasted picture", err);
+        }
+      }
 
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
@@ -89,6 +117,59 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
       console.error("[Whiteboard] redraw failed", err);
     }
   }, []);
+
+  /**
+   * Loads the board's picture, or clears it.
+   *
+   * The redraw is deferred until the image has actually decoded: drawing a
+   * half-loaded image paints nothing, and the board would stay blank until the
+   * next stroke happened to trigger another redraw.
+   */
+  const applyImage = useCallback(
+    (image) => {
+      if (!image?.url) {
+        imageRef.current = null;
+        redraw();
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        imageRef.current = img;
+        redraw();
+      };
+      img.onerror = () => {
+        console.error("[Whiteboard] the board picture could not be loaded", image.url);
+        imageRef.current = null;
+        redraw();
+      };
+      img.src = image.url;
+    },
+    [redraw],
+  );
+
+  /**
+   * Sends a pasted or dropped picture to the class.
+   *
+   * Scaled to a board frame here rather than on the server, which has no image
+   * decoder and should not acquire one: what goes on the wire is pixels, and
+   * the only thing that can be wrong with pixels is their length.
+   */
+  const sendImage = useCallback(
+    async (file) => {
+      if (!allowed || !file) return;
+      setPasting(true);
+      try {
+        const pixels = await toBoardPixels(file);
+        await emitAck("whiteboard-image", { pixels });
+      } catch (err) {
+        console.error("[Whiteboard] paste failed", err);
+        onError?.(err.message || "That picture could not be shared");
+      } finally {
+        setPasting(false);
+      }
+    },
+    [allowed, onError],
+  );
 
   const fitCanvas = useCallback(() => {
     try {
@@ -130,6 +211,11 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
     fitCanvas();
   }, [initial, fitCanvas]);
 
+  // Whatever was already on the board when this browser arrived.
+  useEffect(() => {
+    applyImage(initialImage);
+  }, [initialImage, applyImage]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return undefined;
@@ -164,6 +250,24 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
     };
   }, [fitCanvas]);
 
+  /**
+   * Paste is a window-level event because it has no target of its own: a
+   * canvas cannot take focus, so Ctrl+V would otherwise land on the document
+   * and be ignored. Anything that is not an image is left alone -- pasting
+   * text into the chat box must go on working.
+   */
+  useEffect(() => {
+    if (!allowed) return undefined;
+    const onPaste = (e) => {
+      const file = imageFrom(e.clipboardData);
+      if (!file) return;
+      e.preventDefault();
+      sendImage(file);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [allowed, sendImage]);
+
   useEffect(() => {
     if (!socket) return undefined;
     const onStroke = (stroke) => {
@@ -179,6 +283,8 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
       try {
         console.log("[Whiteboard] remote clear");
         strokesRef.current = [];
+        // Clear means clear: the page goes with the working on it.
+        applyImage(null);
         redraw();
       } catch (err) {
         console.error("[Whiteboard] remote clear failed", err);
@@ -192,10 +298,11 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
      * page everyone was just moved to, which makes a tab switch, a late join
      * and a reconnect all end in the same picture.
      */
-    const onSwitched = ({ strokes }) => {
+    const onSwitched = ({ strokes, image }) => {
       try {
-        console.log("[Whiteboard] board switched", { strokes: strokes?.length || 0 });
+        console.log("[Whiteboard] board switched", { strokes: strokes?.length || 0, image: image?.id });
         strokesRef.current = Array.isArray(strokes) ? [...strokes] : [];
+        applyImage(image);
         redraw();
       } catch (err) {
         console.error("[Whiteboard] board switch failed", err);
@@ -210,7 +317,7 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
       socket.off("whiteboard-clear", onClear);
       socket.off("whiteboard-switched", onSwitched);
     };
-  }, [socket, redraw]);
+  }, [socket, redraw, applyImage]);
 
   const pos = (e) => {
     const canvas = canvasRef.current;
@@ -305,5 +412,13 @@ export function useWhiteboard({ socket, canDraw = false, isTeacher, initial = []
     setTool,
     allowed,
     fitCanvas,
+    // Dropping a file onto the board goes through the same path as a paste.
+    sendImage,
+    onDropFiles: (dataTransfer) => {
+      const file = imageFrom(dataTransfer);
+      if (file) sendImage(file);
+      return Boolean(file);
+    },
+    pasting,
   };
 }

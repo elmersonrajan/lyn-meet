@@ -28,6 +28,10 @@ export default defineConfig({
       // whether a path reaches the backend at all.
       "/auth": { target: "http://127.0.0.1:5000" },
       "/recordings": { target: "http://127.0.0.1:5000" },
+      // Pictures pasted onto a whiteboard. Every student fetches these, so
+      // without an entry here they would be served index.html and the board
+      // would show annotations over nothing.
+      "/board-images": { target: "http://127.0.0.1:5000" },
       "/health": { target: "http://127.0.0.1:5000" },
       // Domain ownership proof for the mobile apps. Without this the SPA
       // answers it with index.html, Android's check fails silently, and every

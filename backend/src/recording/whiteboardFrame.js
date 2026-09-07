@@ -145,12 +145,24 @@ function encodePng(rgb, width, height) {
   ]);
 }
 
-function renderPixels(strokes) {
-  const buf = Buffer.alloc(W * H * 3);
-  for (let i = 0; i < buf.length; i += 3) {
-    buf[i] = BG[0];
-    buf[i + 1] = BG[1];
-    buf[i + 2] = BG[2];
+/**
+ * @param {Array} strokes
+ * @param {Buffer|null} base pixels to draw on instead of a blank board -- a
+ *   picture the teacher pasted, already scaled to exactly this frame. Without
+ *   it a recording of a lesson spent annotating a diagram would show the
+ *   annotations hanging in empty space.
+ */
+function renderPixels(strokes, base) {
+  const buf =
+    Buffer.isBuffer(base) && base.length === W * H * 3
+      ? Buffer.from(base)
+      : Buffer.alloc(W * H * 3);
+  if (!Buffer.isBuffer(base) || base.length !== W * H * 3) {
+    for (let i = 0; i < buf.length; i += 3) {
+      buf[i] = BG[0];
+      buf[i + 1] = BG[1];
+      buf[i + 2] = BG[2];
+    }
   }
   for (const raw of strokes || []) {
     const s = normalizeStroke(raw);
@@ -164,9 +176,9 @@ function renderPixels(strokes) {
   return buf;
 }
 
-function renderPng(strokes) {
+function renderPng(strokes, base) {
   try {
-    return encodePng(renderPixels(strokes), W, H);
+    return encodePng(renderPixels(strokes, base), W, H);
   } catch (err) {
     log.error("renderPng failed", err);
     throw err;
@@ -204,11 +216,11 @@ function renderPpm(strokes) {
  * Writes one whiteboard frame. The extension decides the format, so a caller
  * asking for .png gets PNG and an existing .ppm caller is unaffected.
  */
-function writeBoardFrame(filePath, strokes) {
+function writeBoardFrame(filePath, strokes, base) {
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const usePng = /\.png$/i.test(filePath);
-    fs.writeFileSync(filePath, usePng ? renderPng(strokes) : renderPpm(strokes));
+    fs.writeFileSync(filePath, usePng ? renderPng(strokes, base) : renderPpm(strokes));
     return filePath;
   } catch (err) {
     log.error("writeBoardFrame failed", filePath, err);

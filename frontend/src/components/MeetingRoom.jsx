@@ -106,6 +106,9 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     // share a screen, but does not write on the board.
     canDraw: isTeacher,
     initial: joinPayload.whiteboard || [],
+    // A picture already pasted onto the board this browser is joining into.
+    initialImage: joinPayload.boardImage || null,
+    onError: showToast,
   });
 
   useEffect(() => {

@@ -19,6 +19,7 @@ const { startIdleReaper } = require("./rooms/idleReaper");
 const { RECORDINGS_DIR } = require("./recording/cloudRecorder");
 const attendance = require("./attendance/attendanceLog");
 const attendanceDb = require("./attendance/attendanceDb");
+const boardImages = require("./whiteboard/boardImages");
 const { rooms } = require("./mediasoup/roomManager");
 const { createLogger } = require("./utils/logger");
 
@@ -281,6 +282,26 @@ async function main() {
     // Finished class recordings are student data, not public files.
     app.use("/recordings", requireStaff, express.static(RECORDINGS_DIR));
 
+    /**
+     * Pictures pasted onto a whiteboard, fetched by every browser in the room.
+     *
+     * Signed in rather than staff: the students are the ones who have to see
+     * the diagram. Cached hard because the file never changes -- a new paste
+     * is a new id, so nothing here is ever rewritten under a name a browser
+     * already has.
+     */
+    app.use(
+      "/board-images",
+      (req, res, next) => {
+        if (!req.user && !authConfig.authDisabled) {
+          res.status(401).json({ ok: false, error: "Sign in to see this" });
+          return;
+        }
+        next();
+      },
+      express.static(boardImages.DIR, { maxAge: "1h", immutable: true, extensions: false }),
+    );
+
     app.post(
       "/api/recordings/chunk",
       requireStaff,
@@ -452,6 +473,8 @@ async function main() {
         if (published) log.warn("published recordings that had no row", { published });
       })
       .catch((err) => log.error("recording sweep failed", err.message));
+    // Pasted pictures are the pages of one lesson, not a library.
+    boardImages.sweep();
 
     server.listen(PORT, HOST, () => {
       log.info(`backend listening on http://${HOST}:${PORT}`);
