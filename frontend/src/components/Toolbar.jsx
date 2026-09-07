@@ -17,7 +17,6 @@ import {
   IconThumbUp,
   IconThumbDown,
   IconTrash,
-  IconStar,
 } from "./Icons.jsx";
 
 export default function Toolbar({
@@ -237,10 +236,6 @@ export default function Toolbar({
       */}
       {staff ? (
         <div className="tgroup praise" role="group" aria-label="Appreciate a student">
-          <span className="tgroup-label">
-            <IconStar size={14} />
-            Praise
-          </span>
           {(appreciations || []).map((award) => (
             <button
               key={award.id}
