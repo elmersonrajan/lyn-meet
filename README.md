@@ -187,7 +187,11 @@ query form needs no server configuration at all, which is why it is the default.
 ## Whiteboards, shared video and appreciation
 
 **Whiteboard tabs.** `Whiteboard 1 | Whiteboard 2 | +`. A new board no longer
-replaces the old one -- each keeps its own strokes for the meeting. Only the
+replaces the old one -- each keeps its own strokes for the meeting. Each tab
+carries a close button, like a browser tab; it asks before deleting, because
+everything drawn on that board goes with it. The last board cannot be closed,
+and the numbers come from position, so the tabs always read 1..N however many
+have come and gone. Only the
 teacher can add or switch, and switching moves the whole class: the strokes
 travel with the switch, so a tab change, a late join and a reconnect all end in
 the same picture. The recording follows whichever board the class is on.

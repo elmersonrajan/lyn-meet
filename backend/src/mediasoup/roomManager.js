@@ -111,7 +111,7 @@ class Room {
      * time -- the class watches whichever the teacher is on, which is what
      * makes a tab switch meaningful rather than a private view.
      */
-    this.boards = [{ id: "b1", name: "Whiteboard 1", strokes: [] }];
+    this.boards = [{ id: "b1", strokes: [] }];
     this.activeBoardId = "b1";
     this.boardSeq = 1;
     this.polls = [];
@@ -147,20 +147,57 @@ class Room {
     );
   }
 
-  /** Tabs, without the strokes: what the bar along the top is drawn from. */
+  /**
+   * Tabs, without the strokes: what the bar along the top is drawn from.
+   *
+   * The number comes from the board's position rather than being stored on it.
+   * A stored name survives the board being deleted from the middle -- tabs
+   * reading "1, 3, 4" and a new one arriving as another "4" -- whereas a
+   * position always reads 1..N because that is what it is.
+   */
   boardTabs() {
-    return this.boards.map((b) => ({ id: b.id, name: b.name, strokeCount: b.strokes.length }));
+    return this.boards.map((b, index) => ({
+      id: b.id,
+      name: `Whiteboard ${index + 1}`,
+      strokeCount: b.strokes.length,
+    }));
   }
 
   addBoard() {
     if (this.boards.length >= MAX_BOARDS) {
       throw new Error(`A meeting can hold ${MAX_BOARDS} whiteboards`);
     }
+    // Ids are never reused, even as boards come and go: a client that acts a
+    // moment late must not be able to hit a board that has taken the number of
+    // the one it meant.
     this.boardSeq += 1;
-    const board = { id: `b${this.boardSeq}`, name: `Whiteboard ${this.boards.length + 1}`, strokes: [] };
+    const board = { id: `b${this.boardSeq}`, strokes: [] };
     this.boards.push(board);
     this.activeBoardId = board.id;
     return board;
+  }
+
+  /**
+   * Deletes a board and moves the class to a neighbour.
+   *
+   * The last one cannot go. A meeting with no board would leave the stage
+   * showing nothing, with no way back except a new board -- and "delete" would
+   * then mean two different things depending on how many were open.
+   *
+   * @returns {object} the board everyone is now on
+   */
+  removeBoard(boardId) {
+    if (this.boards.length <= 1) throw new Error("A meeting needs at least one whiteboard");
+    const index = this.boards.findIndex((b) => b.id === boardId);
+    if (index === -1) throw new Error("No such whiteboard");
+
+    const [removed] = this.boards.splice(index, 1);
+    if (removed.id === this.activeBoardId) {
+      // The one that took its place, or the last one if it was at the end --
+      // which is where the eye already is.
+      this.activeBoardId = this.boards[Math.min(index, this.boards.length - 1)].id;
+    }
+    return this.activeBoard();
   }
 
   selectBoard(boardId) {

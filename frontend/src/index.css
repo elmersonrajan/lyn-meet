@@ -1806,6 +1806,60 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   flex: 0 0 auto;
 }
 
+/* The tab and its close button, side by side inside one shape -- the close
+   button has to sit ON the tab rather than after it, or the row reads as twice
+   as many controls as it has. */
+.board-tab-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: #fff;
+  overflow: hidden;
+}
+
+.board-tab-wrap.active {
+  border-color: var(--line);
+  box-shadow: inset 0 3px 0 var(--line);
+}
+
+/* Inside the wrapper now, so the border and the rounding belong to the pair. */
+.board-tab-wrap .board-tab {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.board-tab-wrap .board-tab.closable { padding-right: 6px; }
+
+/* Chrome's shape: a small round × that only colours in on approach, so a row
+   of tabs is not a row of red crosses. */
+.board-tab-close {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  margin: 5px 5px 5px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.board-tab-close:hover:not(:disabled) {
+  background: #fdecec;
+  color: var(--danger);
+}
+
+.board-tab-close:disabled { opacity: 0.4; cursor: default; }
+
 .board-tab {
   position: relative;
   display: inline-flex;
