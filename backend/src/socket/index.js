@@ -1,5 +1,6 @@
 const { randomUUID } = require("crypto");
 const { getIceServers } = require("../config/ice");
+const { mediaProfile } = require("../config/media");
 const {
   Peer,
   getOrCreateRoom,
@@ -167,6 +168,9 @@ function joinAck(room, peer, extra = {}) {
     routerRtpCapabilities: room.router.rtpCapabilities,
     iceServers: getIceServers(),
     stageMode: room.stageMode,
+    // What each browser should capture and how much it may spend doing it.
+    // Sent by the server so it can be tuned without rebuilding the frontend.
+    mediaProfile: mediaProfile(),
     questions: room.questions.map((q) => questionPublic(q, peer)),
     polls: room.polls.map((p) => pollPublic(p, peer.id)),
     whiteboard: room.whiteboard,

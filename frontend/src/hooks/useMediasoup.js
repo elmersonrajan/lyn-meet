@@ -3,11 +3,87 @@ import * as mediasoupClient from "mediasoup-client";
 import { emitAck } from "../services/socket";
 
 /**
- * One definition for the camera, used both when the meeting starts and every
- * time it is switched back on -- turning the camera off and on again must not
- * quietly change the resolution the class is being taught in.
+ * What to capture and how much to spend sending it, when the server has not
+ * said.
+ *
+ * The server does say -- it hands a profile over at join time so the numbers
+ * can be tuned from a `.env` file rather than by rebuilding this. These are
+ * the fallback for an older server, and they are also the documentation: the
+ * teacher's tile is a few hundred pixels wide, so capturing 720p and spending
+ * two megabits a second on it was paid for by every person in the room and
+ * visible to none of them.
  */
-const CAM_CONSTRAINTS = { width: 1280, height: 720 };
+const DEFAULT_PROFILE = {
+  camera: {
+    width: 640,
+    height: 360,
+    frameRate: 20,
+    maxBitrate: 300000,
+    degradationPreference: "maintain-framerate",
+  },
+  screen: { maxBitrate: 1200000, maxFramerate: 24 },
+};
+
+/** getUserMedia constraints for the camera, from the profile in force. */
+function camConstraints(profile) {
+  const cam = profile?.camera || DEFAULT_PROFILE.camera;
+  return {
+    width: { ideal: cam.width },
+    height: { ideal: cam.height },
+    // `max`, not `ideal`: a webcam offered 30 will take 30, and the point here
+    // is to not be sent 30.
+    frameRate: { max: cam.frameRate },
+  };
+}
+
+/**
+ * The encoding a producer is created with.
+ *
+ * maxBitrate is the whole point of this change. Without it the encoder is
+ * told only what the picture is, and decides for itself what it is worth --
+ * which for a moving 720p picture is a megabit or two.
+ */
+function camEncodings(profile) {
+  const cam = profile?.camera || DEFAULT_PROFILE.camera;
+  return {
+    encodings: [{ maxBitrate: cam.maxBitrate, maxFramerate: cam.frameRate }],
+    codecOptions: {
+      // Starting near the ceiling rather than crawling up to it: the first
+      // seconds of a lesson should not look like the worst of it.
+      videoGoogleStartBitrate: Math.round(cam.maxBitrate / 1000),
+      videoGoogleMaxBitrate: Math.round(cam.maxBitrate / 1000),
+    },
+  };
+}
+
+function screenEncodings(profile) {
+  const screen = profile?.screen || DEFAULT_PROFILE.screen;
+  return {
+    encodings: [{ maxBitrate: screen.maxBitrate, maxFramerate: screen.maxFramerate }],
+    codecOptions: { videoGoogleStartBitrate: Math.round(screen.maxBitrate / 1000) },
+  };
+}
+
+/**
+ * Asks the encoder to sacrifice sharpness rather than smoothness.
+ *
+ * A talking head that stutters reads as a broken connection; one that softens
+ * for a moment reads as nothing at all. This is not part of produce(), so it is
+ * set on the sender afterwards -- and it is entirely optional: a browser that
+ * does not offer the sender, or the setting, simply keeps its own default.
+ */
+async function preferSmoothness(producer, preference) {
+  try {
+    const sender = producer?.rtpSender;
+    if (!sender || typeof sender.getParameters !== "function") return;
+    const params = sender.getParameters();
+    params.degradationPreference = preference;
+    await sender.setParameters(params);
+    console.log("[Mediasoup] degradationPreference", preference);
+  } catch (err) {
+    console.warn("[Mediasoup] could not set degradationPreference", err.message);
+  }
+}
 
 /**
  * Tells the server about a camera change without making the hardware wait for
@@ -26,7 +102,7 @@ function signalVideo(event) {
   );
 }
 
-export function useMediasoup({ socket, role, peerId, enabled }) {
+export function useMediasoup({ socket, role, peerId, enabled, profile }) {
   const deviceRef = useRef(null);
   const sendTransportRef = useRef(null);
   const recvTransportRef = useRef(null);
@@ -36,6 +112,9 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
   // Held while a camera is being acquired or released, so the button cannot
   // start a second capture on top of the first.
   const camBusyRef = useRef(false);
+  /** The server's media profile, read wherever a track is created. */
+  const profileRef = useRef(profile || DEFAULT_PROFILE);
+  profileRef.current = profile || DEFAULT_PROFILE;
 
   const [localStream, setLocalStream] = useState(null);
   const [teacherStream, setTeacherStream] = useState(null);
@@ -209,7 +288,7 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
     try {
       const wantCam = role === "teacher";
       const constraints = wantCam
-        ? { audio: true, video: CAM_CONSTRAINTS }
+        ? { audio: true, video: camConstraints(profileRef.current) }
         : { audio: true, video: false };
       console.log("[Mediasoup] getUserMedia", constraints, { role });
       // A reconnect runs this again, and the previous capture is still holding
@@ -239,11 +318,20 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
 
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack && role === "teacher" && sendTransportRef.current) {
+        // A face rather than a spreadsheet: the encoder is told so, and will
+                // spend its bits on faces rather than on edges.
+        try {
+          videoTrack.contentHint = "motion";
+        } catch (err) {
+          console.warn("[Mediasoup] contentHint not supported", err.message);
+        }
         const producer = await sendTransportRef.current.produce({
           track: videoTrack,
+          ...camEncodings(profileRef.current),
           appData: { source: "video" },
         });
         producersRef.current.video = producer;
+        await preferSmoothness(producer, profileRef.current.camera?.degradationPreference);
         setCamOn(true);
       }
     } catch (err) {
@@ -457,7 +545,9 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
       const audio = localStream ? localStream.getAudioTracks() : [];
 
       if (next) {
-        const fresh = await navigator.mediaDevices.getUserMedia({ video: CAM_CONSTRAINTS });
+        const fresh = await navigator.mediaDevices.getUserMedia({
+          video: camConstraints(profileRef.current),
+        });
         const track = fresh.getVideoTracks()[0];
         if (!track) throw new Error("the camera returned no video track");
         if (producersRef.current.video) {
@@ -469,6 +559,7 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
           // over a camera nobody else can see.
           producersRef.current.video = await sendTransportRef.current.produce({
             track,
+            ...camEncodings(profileRef.current),
             appData: { source: "video" },
           });
         }
@@ -565,8 +656,19 @@ export function useMediasoup({ socket, role, peerId, enabled }) {
         systemAudio: "include",
       });
       const track = stream.getVideoTracks()[0];
+      /**
+       * A tab playing a film and a tab showing a spreadsheet want opposite
+       * things from an encoder, and it will act on being told which this is:
+       * "motion" keeps a video smooth, "detail" keeps text readable.
+       */
+      try {
+        track.contentHint = preferTab ? "motion" : "detail";
+      } catch (err) {
+        console.warn("[Mediasoup] contentHint not supported", err.message);
+      }
       const producer = await sendTransportRef.current.produce({
         track,
+        ...screenEncodings(profileRef.current),
         appData: { source: "screen" },
       });
       producersRef.current.screen = producer;

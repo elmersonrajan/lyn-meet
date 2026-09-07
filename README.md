@@ -223,6 +223,30 @@ only an id.
 **Ending a session** now asks first. It removes everyone from the lesson and
 cannot be undone, and the button sits beside Leave.
 
+## How much data a class costs
+
+The teacher's camera used to be captured at 1280x720 with no ceiling on its
+bitrate, which VP8 will spend 1.5-2 Mbps on. It is displayed in a tile a few
+hundred pixels wide, so that was paid for by the teacher's uplink and every
+student's downlink and visible to none of them.
+
+| | Capture | Cap | Roughly |
+| --- | --- | --- | --- |
+| Camera | 640x360 at 20fps | 300 kbps | ~0.3 Mbps |
+| Screen | unchanged (text must stay readable) | 1.2 Mbps at 24fps | ~1.2 Mbps |
+| Per person, all sources | | 2.5 Mbps, enforced server-side | |
+
+The profile is **sent by the server** at join time (`CAM_*`, `SCREEN_*`,
+`MAX_INCOMING_BITRATE` in `.env`), so it can be tuned for the connections
+teachers actually have with a restart rather than a frontend rebuild. The cap
+is also applied to the transport with `setMaxIncomingBitrate`, so it holds
+whatever the browser asks for.
+
+Under pressure the camera gives up sharpness rather than smoothness
+(`maintain-framerate`) -- a stuttering face reads as a broken connection, a
+softer one reads as nothing at all. Set `CAM_DEGRADATION=maintain-resolution`
+for a camera pointed at handwriting.
+
 ## Attendance
 
 In/out times and duration per person. The Attendance button is visible to the
