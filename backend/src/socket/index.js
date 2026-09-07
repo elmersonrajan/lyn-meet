@@ -740,6 +740,36 @@ function attachSocketHandlers(io) {
     });
 
     /**
+     * Deletes a board, and moves the class to the one beside it.
+     *
+     * The strokes of the new board travel with the message for the same reason
+     * a switch carries them: what every browser paints is what the server
+     * holds, rather than something each of them remembered separately.
+     */
+    socket.on("whiteboard-remove", ({ boardId }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        requireTeacher(peer);
+        const active = room.removeBoard(boardId);
+        log.action("whiteboard-remove", {
+          roomId: room.id,
+          boardId,
+          left: room.boards.length,
+          nowOn: active.id,
+        });
+        io.to(room.id).emit("whiteboard-switched", {
+          ...boardsPublic(room),
+          strokes: active.strokes,
+        });
+        ack(callback, { ok: true, activeBoardId: active.id });
+      } catch (err) {
+        log.error("whiteboard-remove failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    /**
      * Play something to the class -- an uploaded clip, or a YouTube video.
      *
      * The room holds what is playing and roughly where it has got to, and each

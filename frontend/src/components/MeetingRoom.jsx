@@ -59,6 +59,9 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   const [boards, setBoards] = useState(joinPayload.boards || []);
   const [activeBoardId, setActiveBoardId] = useState(joinPayload.activeBoardId || null);
   const [boardBusy, setBoardBusy] = useState(false);
+  // The board a teacher has asked to delete, held until they confirm. Its
+  // drawings go with it, so this one asks first.
+  const [boardToDelete, setBoardToDelete] = useState(null);
   // The praise currently on screen. One at a time: two celebrations at once
   // would be neither.
   const [award, setAward] = useState(null);
@@ -586,6 +589,27 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     }
   };
 
+  /**
+   * Deleting a board takes everything drawn on it, which is why it asks first.
+   *
+   * The server chooses where the class lands afterwards and tells everybody,
+   * so there is no local guess about which board is now live.
+   */
+  const removeBoard = async () => {
+    const target = boardToDelete;
+    if (!isTeacher || !target) return;
+    setBoardBusy(true);
+    try {
+      await emitAck("whiteboard-remove", { boardId: target.id });
+      setBoardToDelete(null);
+    } catch (err) {
+      console.error("[MeetingRoom] remove board failed", err);
+      setToast(err.message);
+    } finally {
+      setBoardBusy(false);
+    }
+  };
+
   /** Praise the class, not one screen: the server puts it on everyone's. */
   const sendAppreciation = async (id) => {
     if (!isStaff) return;
@@ -713,6 +737,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
               busy={boardBusy}
               onSelect={selectBoard}
               onAdd={addBoard}
+              onRemove={(id, name) => setBoardToDelete({ id, name })}
             />
           ) : null}
           <div className="stage-canvas">
@@ -848,6 +873,18 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         error={ytError}
         onPlay={shareYouTube}
         onCancel={() => setYtOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(boardToDelete) && isTeacher}
+        title={`Delete ${boardToDelete?.name || "this whiteboard"}?`}
+        message="Everything drawn on it will be lost, for everyone. The other whiteboards are not affected."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        danger
+        busy={boardBusy}
+        onConfirm={removeBoard}
+        onCancel={() => setBoardToDelete(null)}
       />
 
       <ConfirmDialog
