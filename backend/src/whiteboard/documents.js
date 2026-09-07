@@ -29,7 +29,7 @@ const DIR = process.env.DOCUMENTS_DIR
   : path.join(__dirname, "..", "..", "documents");
 
 /** Long enough for the lesson it was opened in, and no longer. */
-const MAX_AGE_MS = Number(process.env.DOCUMENT_MAX_AGE_HOURS || 24) * 60 * 60 * 1000;
+const MAX_AGE_MS = Number(process.env.DOCUMENT_MAX_AGE_HOURS || 6) * 60 * 60 * 1000;
 
 /**
  * Below the socket's own 20 MB frame limit, with room for the rest of the
@@ -197,17 +197,46 @@ async function save(meetingId, { bytes, name, type }) {
   }
 
   fs.mkdirSync(DIR, { recursive: true });
-  const meeting = String(meetingId || "meeting")
-    .replace(/[^a-zA-Z0-9_-]/g, "_")
-    .slice(0, 48) || "meeting";
-  const id = `${meeting}_${Date.now()}`;
+  const id = `${meetingKey(meetingId)}_${Date.now()}`;
   fs.writeFileSync(path.join(DIR, `${id}.pdf`), pdf);
 
   log.action("document stored", { meetingId, id, name: display, bytes: pdf.length });
   return { id, url: `/documents/${id}.pdf`, name: display };
 }
 
-/** Deletes documents older than a day, at boot. */
+/** The meeting a stored file belongs to, which is the first part of its name. */
+function meetingKey(meetingId) {
+  return (
+    String(meetingId || "meeting")
+      .replace(/[^a-zA-Z0-9_-]/g, "_")
+      .slice(0, 48) || "meeting"
+  );
+}
+
+/** Everything this meeting opened, gone the moment the meeting is. */
+function removeForMeeting(meetingId) {
+  try {
+    if (!fs.existsSync(DIR)) return 0;
+    const prefix = `${meetingKey(meetingId)}_`;
+    let removed = 0;
+    for (const name of fs.readdirSync(DIR)) {
+      if (!name.startsWith(prefix)) continue;
+      try {
+        fs.unlinkSync(path.join(DIR, name));
+        removed += 1;
+      } catch (err) {
+        log.error("could not remove a document", { name, error: err.message });
+      }
+    }
+    if (removed) log.info("documents removed with the meeting", { meetingId, removed });
+    return removed;
+  } catch (err) {
+    log.error("removeForMeeting failed", err);
+    return 0;
+  }
+}
+
+/** Deletes anything older than a lesson. */
 function sweep(now = Date.now()) {
   try {
     if (!fs.existsSync(DIR)) return 0;
@@ -235,6 +264,7 @@ module.exports = {
   MAX_BYTES,
   save,
   sweep,
+  removeForMeeting,
   safeId,
   cleanName,
   looksLikePdf,

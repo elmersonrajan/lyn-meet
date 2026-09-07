@@ -491,10 +491,21 @@ async function main() {
         if (published) log.warn("published recordings that had no row", { published });
       })
       .catch((err) => log.error("recording sweep failed", err.message));
-    // Pasted pictures and opened documents are the pages of one lesson, not a
-    // library.
-    boardImages.sweep();
-    documents.sweep();
+    /**
+     * Pasted pictures and opened documents are the pages of one lesson.
+     *
+     * A meeting takes its own with it when it closes; this catches whatever a
+     * crash or a hard restart left behind. On a timer as well as at boot,
+     * because a server that stays up for a month would otherwise never sweep
+     * at all -- which is how "temporary" quietly becomes "forever".
+     */
+    const sweepMaterials = () => {
+      boardImages.sweep();
+      documents.sweep();
+    };
+    sweepMaterials();
+    setInterval(sweepMaterials, Number(process.env.MATERIAL_SWEEP_MINUTES || 30) * 60 * 1000)
+      .unref();
 
     server.listen(PORT, HOST, () => {
       log.info(`backend listening on http://${HOST}:${PORT}`);

@@ -202,13 +202,9 @@ picture is the page and the drawing is the working on it. A diagram, a photo of
 a page, a screenshot of a PDF or a Word document -- anything the browser can
 decode as an image.
 
-The browser scales it to the size of a board frame and sends **raw pixels**,
-not a file: the server composites this into the class recording and its frame
-renderer has no image decoder, so nothing here parses a format a client chose.
-It travels over the socket rather than as an upload, which is why no proxy body
-limit applies. One picture per board -- pasting again replaces it, and Clear
-takes it with the strokes. Pictures are swept after a day
-(`BOARD_IMAGE_MAX_AGE_HOURS`).
+The browser scales it to the shape of a board and sends a **PNG** over the
+socket -- not an upload, so no proxy body limit applies. One picture per board -- pasting again replaces it, and Clear
+takes it with the strokes.
 
 **Open a PDF or Word document on the board.** The document button on the board
 tools, or paste or drop the file. The file is stored once and **every browser
@@ -255,6 +251,15 @@ only an id.
 
 **Ending a session** now asks first. It removes everyone from the lesson and
 cannot be undone, and the button sits beside Leave.
+
+### Nothing is kept
+
+Pictures and documents live on the server only so that every browser in the
+room can fetch them. They are deleted **when the meeting closes**, and swept on
+a timer as well as at boot for whatever a crash left behind -- a server that
+stays up for a month would otherwise never sweep at all, which is how
+"temporary" quietly becomes "forever". `BOARD_IMAGE_MAX_AGE_HOURS`,
+`DOCUMENT_MAX_AGE_HOURS` and `MATERIAL_SWEEP_MINUTES` tune the backstop.
 
 ## What the recording contains
 

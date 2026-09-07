@@ -1,10 +1,10 @@
 /**
  * Pictures pasted onto a whiteboard.
  *
- * The thing worth testing here is the contract that keeps the server free of
- * an image decoder: what arrives is exactly one board frame of raw pixels, and
- * anything else is refused rather than stored and later composited into a
- * class recording as garbage.
+ * They are stored so the other browsers in the room can fetch them, and for no
+ * longer than the lesson that used them. What is tested here is the boundary:
+ * only an image is accepted, a meeting id cannot climb out of the folder, and
+ * both the sweep and the end of a meeting really do delete.
  *
  * Run with:  npm test
  */
@@ -18,78 +18,64 @@ const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lynmeet-boards-"));
 process.env.BOARD_IMAGES_DIR = DIR;
 
 const boardImages = require("../src/whiteboard/boardImages");
-const { FRAME_W, FRAME_H } = require("../src/recording/whiteboardFrame");
 
-const frame = (fill = 128) => Buffer.alloc(FRAME_W * FRAME_H * 3, fill);
+/** The eight bytes that make a file a PNG, and a little padding. */
+const png = (extra = 64) =>
+  Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(extra)]);
 
-test("a picture is stored as pixels for the recording and a PNG for the browsers", () => {
-  const stored = boardImages.save("10197", frame(64));
-
+test("a picture is stored where the other browsers can fetch it", () => {
+  const stored = boardImages.save("10197", png());
   assert.match(stored.id, /^10197_\d+$/);
   assert.equal(stored.url, `/board-images/${stored.id}.png`);
-
-  // The pixels, byte for byte, because the recorder composites them directly.
-  const pixels = boardImages.pixels(stored.id);
-  assert.equal(pixels.length, FRAME_W * FRAME_H * 3);
-  assert.equal(pixels[0], 64);
-
-  // And a real PNG beside them, for everyone's browser.
-  const png = fs.readFileSync(path.join(DIR, `${stored.id}.png`));
-  assert.deepEqual([...png.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
+  assert.ok(fs.existsSync(path.join(DIR, `${stored.id}.png`)));
 });
 
-test("anything that is not one board frame of pixels is refused", () => {
+test("anything that is not an image is refused", () => {
   for (const wrong of [
     Buffer.alloc(0),
-    Buffer.alloc(100),
-    Buffer.alloc(FRAME_W * FRAME_H * 3 - 1),
-    Buffer.alloc(FRAME_W * FRAME_H * 4),
+    Buffer.from("not an image at all"),
+    // A JPEG is a perfectly good image and still not what the board is sent.
+    Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0]),
     null,
-    "not a buffer",
+    "a string",
   ]) {
-    assert.throws(() => boardImages.save("10197", wrong), /shape/);
+    assert.throws(() => boardImages.save("10197", wrong), /empty|image/);
   }
+});
+
+test("a picture larger than a board could need is refused", () => {
+  const huge = Buffer.concat([png(), Buffer.alloc(boardImages.MAX_BYTES)]);
+  assert.throws(() => boardImages.save("10197", huge), /more than a board needs/);
 });
 
 test("a meeting id cannot reach outside the pictures folder", () => {
-  const stored = boardImages.save("../../etc/passwd", frame());
+  const stored = boardImages.save("../../etc/passwd", png());
   assert.match(stored.id, /^_+etc_passwd_\d+$/);
   assert.equal(stored.url.includes(".."), false);
-  assert.ok(fs.existsSync(path.join(DIR, `${stored.id}.rgb`)));
 });
 
-test("asking for a picture that is not there is an absence, not a crash", () => {
-  assert.equal(boardImages.pixels("no-such-image"), null);
-  assert.equal(boardImages.pixels(""), null);
-  assert.equal(boardImages.pixels(null), null);
-  // An id is checked before it reaches the filesystem.
-  assert.equal(boardImages.pixels("../../../etc/passwd"), null);
-  assert.equal(boardImages.pixels("a/b"), null);
+test("a meeting takes its pictures with it when it ends", () => {
+  const mine = boardImages.save("10500", png());
+  const other = boardImages.save("10501", png());
+
+  const removed = boardImages.removeForMeeting("10500");
+  assert.equal(removed, 1);
+  assert.equal(fs.existsSync(path.join(DIR, `${mine.id}.png`)), false);
+  // Another meeting's materials are not this meeting's business.
+  assert.ok(fs.existsSync(path.join(DIR, `${other.id}.png`)));
 });
 
-test("old pictures are swept, and today's are left alone", () => {
-  const kept = boardImages.save("10197", frame());
-  const old = boardImages.save("10197", frame());
+test("old pictures are swept, and this lesson's are left alone", () => {
+  const kept = boardImages.save("10197", png());
+  const old = boardImages.save("10197", png());
 
-  // Two days back, which is past the one-day life of a lesson's pages.
   const ago = Date.now() - 48 * 60 * 60 * 1000;
-  for (const ext of ["rgb", "png"]) {
-    fs.utimesSync(path.join(DIR, `${old.id}.${ext}`), ago / 1000, ago / 1000);
-  }
+  fs.utimesSync(path.join(DIR, `${old.id}.png`), ago / 1000, ago / 1000);
 
   const removed = boardImages.sweep();
-  assert.ok(removed >= 2, `expected both files of the old picture to go, removed ${removed}`);
-  assert.ok(fs.existsSync(path.join(DIR, `${kept.id}.rgb`)));
-  assert.equal(fs.existsSync(path.join(DIR, `${old.id}.rgb`)), false);
-});
-
-test("the frame renderer draws strokes over the picture, not instead of it", () => {
-  const { renderPng } = require("../src/recording/whiteboardFrame");
-  const blank = renderPng([]);
-  const overPicture = renderPng([], frame(200));
-  // Same board, same (absent) strokes, different background: the picture is
-  // reaching the recording rather than being ignored.
-  assert.equal(blank.equals(overPicture), false);
+  assert.ok(removed >= 1, `expected the old picture to go, removed ${removed}`);
+  assert.ok(fs.existsSync(path.join(DIR, `${kept.id}.png`)));
+  assert.equal(fs.existsSync(path.join(DIR, `${old.id}.png`)), false);
 });
 
 test.after(() => {

@@ -755,23 +755,27 @@ function attachSocketHandlers(io) {
     /**
      * A picture pasted onto the live board.
      *
-     * What arrives is raw pixels, already scaled by the browser to exactly a
-     * board frame -- not a PNG or a JPEG. The server has to composite this
-     * into the class recording, and the frame renderer has no image decoder in
-     * it; pixels mean there is no file format here that a client chose and
-     * nothing on this side to get wrong.
+     * A PNG, already scaled by the browser to the shape of a board.
+     *
+     * It used to be raw pixels -- 2.7 MB of them -- so the server could
+     * composite the picture into a recording without owning an image decoder.
+     * A recording is now a capture of the teacher's own screen, so that reason
+     * is gone, and with it the reason to put three megabytes on the wire for a
+     * diagram that compresses to a couple of hundred kilobytes. Nothing here
+     * decodes it: the bytes are checked for a PNG header, stored, and served.
      *
      * It comes over the socket rather than as an upload because a websocket
      * frame is not subject to the body-size limit on the proxy in front of
      * this server, which is what refused every video upload before it.
      */
-    socket.on("whiteboard-image", ({ pixels }, callback) => {
+    socket.on("whiteboard-image", ({ png }, callback) => {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
         // Pasting is drawing: the same restriction as a stroke.
         requireTeacher(peer);
-        const buffer = Buffer.isBuffer(pixels) ? pixels : Buffer.from(pixels || []);
+        const buffer = Buffer.isBuffer(png) ? png : Buffer.from(png || []);
+        log.info("board picture arriving", { roomId: room.id, bytes: buffer.length });
         const stored = boardImages.save(room.id, buffer);
 
         const board = room.activeBoard();
