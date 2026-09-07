@@ -682,65 +682,77 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       <RemoteAudio items={media.remoteAudio} />
       <div className="room-frame">
         <div className="stage-wrap">
-          {recording ? <div className="rec-pill">REC CLOUD</div> : null}
-          {isStaff ? <RecordingStatus jobs={recJobs} /> : null}
-          {isStaff ? (
-            <div className="stage-tools">
-              <button
-                className={stageMode === "draw" || stageMode === "whiteboard" ? "active" : ""}
-                onClick={() => setStage("draw")}
-              >
-                <IconPen size={16} />
-                Draw
-              </button>
-              <button className={stageMode === "screen" ? "active" : ""} onClick={() => setStage("screen")}>
-                <IconScreen size={16} />
-                Screen
-              </button>
-              <button
-                className={mediaBusy ? "busy" : ""}
-                onClick={() => setVideoHelpOpen(true)}
-                disabled={mediaBusy}
-                title="Play a video to the class from a browser tab, with its sound"
-              >
-                <IconClip size={16} />
-                Play Video
-              </button>
-              <button
-                className={showMedia && sharedMedia?.kind === "youtube" ? "active" : ""}
-                onClick={() => {
-                  setYtError("");
-                  setYtOpen(true);
-                }}
-                disabled={mediaBusy}
-                title="Play a YouTube video for the class"
-              >
-                <IconYouTube size={16} />
-                YouTube
-              </button>
-              {/* Drawing over a video is a normal thing to do mid-lesson, and
-                  without this the only way back to it would be to share it
-                  again from the start. */}
-              {sharedMedia && !showMedia ? (
-                <button onClick={() => setStage("media")} title="Back to the video">
-                  <IconClip size={16} />
-                  Back to video
+          {/*
+            One strip across the top: the whiteboard tabs on the left, taking
+            whatever width is left, and the stage controls on the right.
+
+            The controls used to float over the stage, which put them in the
+            same band as the tab bar -- so from the fourth board on, the tabs
+            ran underneath them and the active tab could be hidden completely.
+          */}
+          <div className="stage-head">
+            {onBoard ? (
+              <WhiteboardTabs
+                boards={boards}
+                activeId={activeBoardId}
+                canEdit={isTeacher}
+                busy={boardBusy}
+                onSelect={selectBoard}
+                onAdd={addBoard}
+                onRemove={(id, name) => setBoardToDelete({ id, name })}
+              />
+            ) : null}
+            {isStaff ? (
+              <div className="stage-tools">
+                <button
+                  className={stageMode === "draw" || stageMode === "whiteboard" ? "active" : ""}
+                  onClick={() => setStage("draw")}
+                >
+                  <IconPen size={16} />
+                  Draw
                 </button>
-              ) : null}
-            </div>
-          ) : null}
-          {onBoard ? (
-            <WhiteboardTabs
-              boards={boards}
-              activeId={activeBoardId}
-              canEdit={isTeacher}
-              busy={boardBusy}
-              onSelect={selectBoard}
-              onAdd={addBoard}
-              onRemove={(id, name) => setBoardToDelete({ id, name })}
-            />
-          ) : null}
+                <button className={stageMode === "screen" ? "active" : ""} onClick={() => setStage("screen")}>
+                  <IconScreen size={16} />
+                  Screen
+                </button>
+                <button
+                  className={mediaBusy ? "busy" : ""}
+                  onClick={() => setVideoHelpOpen(true)}
+                  disabled={mediaBusy}
+                  title="Play a video to the class from a browser tab, with its sound"
+                >
+                  <IconClip size={16} />
+                  Play Video
+                </button>
+                <button
+                  className={showMedia && sharedMedia?.kind === "youtube" ? "active" : ""}
+                  onClick={() => {
+                    setYtError("");
+                    setYtOpen(true);
+                  }}
+                  disabled={mediaBusy}
+                  title="Play a YouTube video for the class"
+                >
+                  <IconYouTube size={16} />
+                  YouTube
+                </button>
+                {/* Drawing over a video is a normal thing to do mid-lesson, and
+                    without this the only way back to it would be to share it
+                    again from the start. */}
+                {sharedMedia && !showMedia ? (
+                  <button onClick={() => setStage("media")} title="Back to the video">
+                    <IconClip size={16} />
+                    Back to video
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
           <div className="stage-canvas">
+            {/* Inside the canvas, not the stage: from out here they would sit
+                on top of the tab bar. */}
+            {recording ? <div className="rec-pill">REC CLOUD</div> : null}
+            {isStaff ? <RecordingStatus jobs={recJobs} /> : null}
             <div style={{ display: onBoard ? "block" : "none", width: "100%", height: "100%" }}>
               <Whiteboard board={board} />
             </div>

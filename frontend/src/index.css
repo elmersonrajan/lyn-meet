@@ -357,16 +357,13 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 
 .stage-tools {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 3;
+  /* In the header row now, not floating over the stage. */
   display: flex;
-  flex-wrap: wrap;
-  max-width: calc(100% - 20px);
+  flex: 0 0 auto;
+  margin: 0 0 6px auto;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.96);
+  background: #fff;
   box-shadow: var(--shadow);
   overflow: hidden;
 }
@@ -1794,16 +1791,35 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
    through. Students see the same bar, greyed, so they know which board the
    class is on without being able to move it.
 --------------------------------------------------------------------------- */
+/* One strip across the top of the stage: tabs on the left with whatever width
+   is left over, controls on the right. The controls used to float over the
+   stage, which put them in the same band as the tabs -- from the fourth board
+   on, the tabs ran underneath them. */
+.stage-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--tint);
+  flex: 0 0 auto;
+  min-width: 0;
+  /* On a window too narrow for both, the controls drop below the tabs rather
+     than being pushed off the edge. */
+  flex-wrap: wrap;
+}
+
 .board-tabs {
   display: flex;
   align-items: flex-end;
   gap: 4px;
-  padding: 6px 8px 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--tint);
+  /* Takes the room the controls do not, and scrolls rather than pushing them
+     off the edge. min-width:0 is what allows a flex child to be narrower than
+     its contents -- without it the row would simply overflow. */
+  flex: 1 1 auto;
+  min-width: 0;
   overflow-x: auto;
   scrollbar-width: thin;
-  flex: 0 0 auto;
 }
 
 /* The tab and its close button, side by side inside one shape -- the close
@@ -1835,6 +1851,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 
 .board-tab-wrap .board-tab.closable { padding-right: 6px; }
+
+/* Every board but the live one, once there are more than five. */
+.board-tab-wrap.compact .board-tab { padding-left: 10px; padding-right: 4px; }
+.board-tab-wrap.compact .board-tab-name { min-width: 12px; text-align: center; }
 
 /* Chrome's shape: a small round × that only colours in on approach, so a row
    of tabs is not a row of red crosses. */

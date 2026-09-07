@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 
 /**
  * The row of boards along the top of the whiteboard.
@@ -26,13 +26,40 @@ export default function WhiteboardTabs({
   // an empty stage with no way back to one.
   const canClose = canEdit && boards.length > 1;
 
+  /**
+   * Past a handful of boards, only the live one keeps its full name.
+   *
+   * Ten tabs reading "Whiteboard 10" cannot fit a row and cannot usefully
+   * shrink either -- every one of them would be truncated to "Whitebo…" and
+   * the row would be ten identical smudges. The number is the part that
+   * identifies a board, so beyond five that is all the others show, with the
+   * full name still on hover. Chrome does the same thing: the tab you are on
+   * stays legible and the rest give way.
+   */
+  const compact = boards.length > 5;
+
+  const activeRef = useRef(null);
+
+  useEffect(() => {
+    // A board can be created or switched to while off-screen -- by this
+    // teacher pressing +, or by nobody at all after a reconnect. The bar
+    // scrolls to whatever is live rather than leaving them to find it.
+    activeRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeId, boards.length]);
+
   return (
     <div className="board-tabs" role="tablist" aria-label="Whiteboards">
       {boards.map((board, index) => {
         const active = board.id === activeId;
         const name = board.name || `Whiteboard ${index + 1}`;
         return (
-          <span key={board.id} className={`board-tab-wrap ${active ? "active" : ""}`}>
+          <span
+            key={board.id}
+            ref={active ? activeRef : null}
+            className={`board-tab-wrap ${active ? "active" : ""} ${
+              compact && !active ? "compact" : ""
+            }`}
+          >
             <button
               type="button"
               role="tab"
@@ -44,7 +71,9 @@ export default function WhiteboardTabs({
               onClick={() => onSelect(board.id)}
               title={canEdit ? `Switch everyone to ${name}` : name}
             >
-              <span className="board-tab-name">{name}</span>
+              <span className="board-tab-name">
+                {compact && !active ? index + 1 : name}
+              </span>
               {board.strokeCount ? <span className="board-tab-dot" aria-hidden="true" /> : null}
             </button>
             {canClose ? (
