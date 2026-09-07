@@ -1,5 +1,5 @@
 import React from "react";
-import { IconPen, IconEraser, IconTrash } from "./Icons.jsx";
+import { IconPen, IconEraser, IconTrash, IconDocument } from "./Icons.jsx";
 
 const COLORS = ["#163a6b", "#d32f2f", "#1b8a4a", "#e08600", "#111827"];
 
@@ -88,6 +88,25 @@ export default function Whiteboard({ board }) {
 
           <span className="board-sep" />
 
+          <span className="board-sep" />
+
+          {/* A PDF or a Word document, which the server converts. Paste and
+              drop do the same thing; this is for a file that is neither on the
+              clipboard nor convenient to drag. */}
+          <label className="board-tool" title="Open a PDF or Word document on the board">
+            <IconDocument size={18} />
+            <input
+              type="file"
+              accept=".pdf,.doc,.docx,.odt,.rtf,.ppt,.pptx,.odp,application/pdf"
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) board.sendDocument?.(file);
+              }}
+            />
+          </label>
+
           <button
             type="button"
             className="board-tool danger"
@@ -96,6 +115,45 @@ export default function Whiteboard({ board }) {
           >
             <IconTrash size={18} />
           </button>
+        </div>
+      ) : null}
+
+      {/* Only while a document is open, and only for whoever turns the pages.
+          Everyone else follows. */}
+      {board.document ? (
+        <div className="board-pager">
+          <span className="board-pager-name" title={board.document.name}>
+            {board.document.name}
+          </span>
+          {board.allowed ? (
+            <>
+              <button
+                type="button"
+                onClick={() => board.setPage((board.document.page || 1) - 1)}
+                disabled={(board.document.page || 1) <= 1}
+                aria-label="Previous page"
+              >
+                ‹
+              </button>
+              <span className="board-pager-count">
+                {board.document.page || 1}
+                {board.pageCount ? ` / ${board.pageCount}` : ""}
+              </span>
+              <button
+                type="button"
+                onClick={() => board.setPage((board.document.page || 1) + 1)}
+                disabled={Boolean(board.pageCount) && (board.document.page || 1) >= board.pageCount}
+                aria-label="Next page"
+              >
+                ›
+              </button>
+            </>
+          ) : (
+            <span className="board-pager-count">
+              Page {board.document.page || 1}
+              {board.pageCount ? ` of ${board.pageCount}` : ""}
+            </span>
+          )}
         </div>
       ) : null}
 

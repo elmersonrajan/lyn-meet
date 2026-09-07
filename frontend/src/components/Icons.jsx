@@ -151,6 +151,14 @@ export const IconClip = (p) => (
   </Svg>
 );
 
+export const IconDocument = (p) => (
+  <Svg {...p}>
+    <path d="M13 3.5H7.5A1.5 1.5 0 0 0 6 5v14a1.5 1.5 0 0 0 1.5 1.5h9A1.5 1.5 0 0 0 18 19V8.5Z" />
+    <path d="M13 3.5V8.5H18" />
+    <path d="M9 12.5h6M9 16h4" />
+  </Svg>
+);
+
 export const IconYouTube = (p) => (
   <Svg {...p}>
     <rect x="2" y="5" width="20" height="14" rx="4" />

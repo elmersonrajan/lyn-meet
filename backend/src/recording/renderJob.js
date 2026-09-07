@@ -237,18 +237,27 @@ async function renderJob(job) {
 
     // Trust the file over the recorder's bookkeeping: a producer that sent no
     // RTP leaves no stream, and a layout referencing a missing stream fails.
+    let stageIndex = job.stageIndex;
     let camIndex = job.camIndex;
     let screenIndex = job.screenIndex;
     let hasAudio = job.hasAudio;
     const probe = probeMedia(job.livePath);
     if (probe) {
       log.info("probed capture", { id: job.id, ...probe });
+      if (stageIndex != null && stageIndex >= probe.videoCount) stageIndex = null;
       if (camIndex != null && camIndex >= probe.videoCount) camIndex = null;
       if (screenIndex != null && screenIndex >= probe.videoCount) screenIndex = null;
       hasAudio = probe.hasAudio;
     }
 
-    const boardVideo = await makeBoardVideo(job);
+    /**
+     * With the teacher's own screen captured, there is nothing to assemble.
+     * The board, the camera, a shared screen, a pasted diagram and a document
+     * are all already in that picture, arranged as the class saw them -- and
+     * re-drawing the board over the top would hide the very thing it was
+     * meant to show.
+     */
+    const boardVideo = stageIndex != null ? null : await makeBoardVideo(job);
     if (!boardVideo && job.boardManifest) dropped.push("whiteboard");
 
     const audio = await makeMixedAudio(job, hasAudio);
@@ -281,8 +290,17 @@ async function renderJob(job) {
     // Richest first; each step drops whatever is most likely to be at fault.
     // Audio is never dropped here -- it is a finished file by this point, and
     // losing the voices is exactly the failure this ordering exists to avoid.
-    const base = { boardVideo, camIndex, screenIndex, sideScreen };
-    const attempts = [
+    const base = { boardVideo, stageIndex, camIndex, screenIndex, sideScreen };
+    const attempts = stageIndex != null
+      ? [
+          // The stage is the whole picture; the only thing worth trying after
+          // it is the picture without it.
+          { label: "stage", ...base, camIndex: null, screenIndex: null, sideScreen: null },
+          { label: "stage-with-camera", ...base, screenIndex: null, sideScreen: null },
+          { label: "no-stage", ...base, stageIndex: null },
+          { label: "audio-only", ...base, stageIndex: null, camIndex: null, screenIndex: null, sideScreen: null },
+        ]
+      : [
       { label: "full", ...base },
       { label: "no-side-screen", ...base, sideScreen: null },
       { label: "no-screen", ...base, sideScreen: null, screenIndex: null },
@@ -303,6 +321,7 @@ async function renderJob(job) {
     for (const attempt of attempts) {
       const nothingToShow =
         attempt.boardVideo == null &&
+        attempt.stageIndex == null &&
         attempt.camIndex == null &&
         attempt.screenIndex == null &&
         attempt.sideScreen == null;
@@ -312,6 +331,7 @@ async function renderJob(job) {
       // twice; running it again would only fail again.
       const key = [
         Boolean(attempt.boardVideo),
+        attempt.stageIndex,
         attempt.camIndex,
         attempt.screenIndex,
         Boolean(attempt.sideScreen),
@@ -324,6 +344,7 @@ async function renderJob(job) {
           livePath: job.livePath,
           boardVideo: attempt.boardVideo,
           outputPath,
+          stageIndex: attempt.stageIndex,
           camIndex: attempt.camIndex,
           screenIndex: attempt.screenIndex,
           sideScreen: attempt.sideScreen,
@@ -341,7 +362,9 @@ async function renderJob(job) {
         const result = {
           ok: true,
           file: resolved.name,
-          layout: attempt.boardVideo
+          layout: attempt.stageIndex != null
+            ? "the teacher's screen"
+            : attempt.boardVideo
             ? shared
               ? "whiteboard + screen overlay"
               : "whiteboard"

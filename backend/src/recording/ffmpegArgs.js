@@ -43,7 +43,7 @@ const PIP_MARGIN = 20;
  *
  * @param {{audio?:object, cam?:object, screen?:object}} tracks
  */
-function buildSdp({ audio, cam, screen }) {
+function buildSdp({ audio, stage, cam, screen }) {
   const lines = [
     "v=0",
     "o=- 0 0 IN IP4 127.0.0.1",
@@ -59,7 +59,10 @@ function buildSdp({ audio, cam, screen }) {
       "a=recvonly",
     );
   }
-  for (const video of [cam, screen]) {
+  // The order here IS the stream order in the captured file, and the indexes
+  // the layout is built from are positions in this list. The stage goes first
+  // because it is the picture when it exists.
+  for (const video of [stage, cam, screen]) {
     if (!video) continue;
     lines.push(
       `m=video ${video.remoteRtpPort} RTP/AVP ${video.payloadType}`,
@@ -251,6 +254,7 @@ function buildComposeArgs(opts) {
     livePath,
     boardVideo,
     outputPath,
+    stageIndex,
     camIndex,
     screenIndex,
     hasAudio,
@@ -289,7 +293,18 @@ function buildComposeArgs(opts) {
   // what using the share itself as the base would do.
   let videoLabel = "base";
   let needsShortest = false;
-  if (boardInput != null) {
+  if (stageIndex != null) {
+    /**
+     * The teacher's own screen, which is the whole picture.
+     *
+     * Nothing is laid over it: the camera, the board, a shared screen, a
+     * pasted diagram and a document are all already in it, arranged the way
+     * the class saw them. Overlaying the camera again would put a second copy
+     * of the teacher in the corner of a picture that already has one.
+     */
+    chains.push(`[0:v:${stageIndex}]${fit(width, height)},fps=${fps}[base]`);
+    needsShortest = true;
+  } else if (boardInput != null) {
     chains.push(`[${boardInput}:v]${fit(width, height)},fps=${fps}[base]`);
   } else {
     // A colour source runs forever, so the output has to be bounded by the

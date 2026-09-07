@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { emitAck } from "../services/socket";
 import { imageFrom, toBoardPixels } from "../services/boardImage";
+import { documentFrom, openDocument, renderPage } from "../services/boardDocument";
 
 /** Map stroke point onto CSS pixel space (nx/ny preferred). */
 function mapPoint(p, cssW, cssH, stroke) {
@@ -49,6 +50,7 @@ export function useWhiteboard({
   isTeacher,
   initial = [],
   initialImage = null,
+  initialDocument = null,
   onError,
 }) {
   // Back-compat: older callers passed isTeacher
@@ -69,6 +71,12 @@ export function useWhiteboard({
    */
   const imageRef = useRef(null);
   const [pasting, setPasting] = useState(false);
+  /**
+   * The open document, kept so that turning a page renders from the file
+   * already parsed rather than fetching and parsing it again.
+   */
+  const pdfRef = useRef({ url: null, doc: null, pages: 0 });
+  const [documentState, setDocumentState] = useState(initialDocument || null);
 
   const redraw = useCallback(() => {
     try {
@@ -148,6 +156,40 @@ export function useWhiteboard({
   );
 
   /**
+   * Puts a document page under the strokes.
+   *
+   * The file is opened once and held; a page change re-renders from it. A
+   * document that fails to open leaves the board blank rather than showing the
+   * page before it, because a page that is silently the wrong one is worse
+   * than no page at all.
+   */
+  const applyDocument = useCallback(
+    async (doc) => {
+      if (!doc?.url) {
+        pdfRef.current = { url: null, doc: null, pages: 0 };
+        return false;
+      }
+      try {
+        if (pdfRef.current.url !== doc.url) {
+          const opened = await openDocument(doc.url);
+          pdfRef.current = { url: doc.url, doc: opened.doc, pages: opened.pages };
+        }
+        const canvas = await renderPage(pdfRef.current.doc, doc.page || 1);
+        imageRef.current = canvas;
+        redraw();
+        return true;
+      } catch (err) {
+        console.error("[Whiteboard] could not render the document", err);
+        imageRef.current = null;
+        redraw();
+        onError?.("That document could not be shown");
+        return false;
+      }
+    },
+    [redraw, onError],
+  );
+
+  /**
    * Sends a pasted or dropped picture to the class.
    *
    * Scaled to a board frame here rather than on the server, which has no image
@@ -166,6 +208,42 @@ export function useWhiteboard({
         onError?.(err.message || "That picture could not be shared");
       } finally {
         setPasting(false);
+      }
+    },
+    [allowed, onError],
+  );
+
+  /**
+   * Sends a document to the class: a PDF, or a Word file the server will
+   * convert. Read here and sent whole over the socket, which no proxy
+   * body-size limit applies to.
+   */
+  const sendDocument = useCallback(
+    async (file) => {
+      if (!allowed || !file) return;
+      setPasting(true);
+      try {
+        const bytes = await file.arrayBuffer();
+        await emitAck("whiteboard-document", { bytes, name: file.name, type: file.type });
+      } catch (err) {
+        console.error("[Whiteboard] document failed", err);
+        onError?.(err.message || "That document could not be shared");
+      } finally {
+        setPasting(false);
+      }
+    },
+    [allowed, onError],
+  );
+
+  /** Turns the page for the whole class. */
+  const setPage = useCallback(
+    async (page) => {
+      if (!allowed) return;
+      try {
+        await emitAck("whiteboard-document-page", { page });
+      } catch (err) {
+        console.error("[Whiteboard] page turn failed", err);
+        onError?.(err.message);
       }
     },
     [allowed, onError],
@@ -213,8 +291,10 @@ export function useWhiteboard({
 
   // Whatever was already on the board when this browser arrived.
   useEffect(() => {
-    applyImage(initialImage);
-  }, [initialImage, applyImage]);
+    if (initialDocument) applyDocument(initialDocument);
+    else applyImage(initialImage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialImage, initialDocument]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -259,6 +339,12 @@ export function useWhiteboard({
   useEffect(() => {
     if (!allowed) return undefined;
     const onPaste = (e) => {
+      const doc = documentFrom(e.clipboardData);
+      if (doc) {
+        e.preventDefault();
+        sendDocument(doc);
+        return;
+      }
       const file = imageFrom(e.clipboardData);
       if (!file) return;
       e.preventDefault();
@@ -266,7 +352,7 @@ export function useWhiteboard({
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [allowed, sendImage]);
+  }, [allowed, sendImage, sendDocument]);
 
   useEffect(() => {
     if (!socket) return undefined;
@@ -284,6 +370,8 @@ export function useWhiteboard({
         console.log("[Whiteboard] remote clear");
         strokesRef.current = [];
         // Clear means clear: the page goes with the working on it.
+        setDocumentState(null);
+        applyDocument(null);
         applyImage(null);
         redraw();
       } catch (err) {
@@ -298,26 +386,45 @@ export function useWhiteboard({
      * page everyone was just moved to, which makes a tab switch, a late join
      * and a reconnect all end in the same picture.
      */
-    const onSwitched = ({ strokes, image }) => {
+    const onSwitched = ({ strokes, image, document: doc }) => {
       try {
-        console.log("[Whiteboard] board switched", { strokes: strokes?.length || 0, image: image?.id });
+        console.log("[Whiteboard] board switched", {
+          strokes: strokes?.length || 0,
+          image: image?.id,
+          document: doc?.id,
+        });
         strokesRef.current = Array.isArray(strokes) ? [...strokes] : [];
-        applyImage(image);
+        setDocumentState(doc || null);
+        if (doc) applyDocument(doc);
+        else applyImage(image);
         redraw();
       } catch (err) {
         console.error("[Whiteboard] board switch failed", err);
       }
     };
 
+    // A page turn is a number, not a board: the document is already open in
+    // every browser, and re-sending it to move one page would be absurd.
+    const onPage = ({ page }) => {
+      setDocumentState((current) => {
+        if (!current) return current;
+        const next = { ...current, page };
+        applyDocument(next);
+        return next;
+      });
+    };
+
     socket.on("whiteboard-stroke", onStroke);
     socket.on("whiteboard-clear", onClear);
     socket.on("whiteboard-switched", onSwitched);
+    socket.on("whiteboard-page", onPage);
     return () => {
       socket.off("whiteboard-stroke", onStroke);
       socket.off("whiteboard-clear", onClear);
       socket.off("whiteboard-switched", onSwitched);
+      socket.off("whiteboard-page", onPage);
     };
-  }, [socket, redraw, applyImage]);
+  }, [socket, redraw, applyImage, applyDocument]);
 
   const pos = (e) => {
     const canvas = canvasRef.current;
@@ -414,7 +521,18 @@ export function useWhiteboard({
     fitCanvas,
     // Dropping a file onto the board goes through the same path as a paste.
     sendImage,
+    sendDocument,
+    setPage,
+    // What is on the board, for the page controls: null unless a document is
+    // open on it.
+    document: documentState,
+    pageCount: pdfRef.current.pages,
     onDropFiles: (dataTransfer) => {
+      const doc = documentFrom(dataTransfer);
+      if (doc) {
+        sendDocument(doc);
+        return true;
+      }
       const file = imageFrom(dataTransfer);
       if (file) sendImage(file);
       return Boolean(file);
