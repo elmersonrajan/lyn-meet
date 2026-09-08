@@ -75,42 +75,55 @@ export default function Whiteboard({ board, onPlayVideo, onYouTube }) {
         ref={board.canvasRef}
         onMouseDown={(e) => {
           /**
-           * Shift turns a drag into moving the page rather than drawing on it.
-           * Zoomed in, the part somebody wants is usually not the part in the
-           * middle, and a pan tool would be another mode to be stuck in.
+           * A plain drag moves the page whenever this board is not also a
+           * surface to draw on -- which is exactly when a page is up, and
+           * exactly when somebody has zoomed in. On a writable board the pen
+           * keeps the plain drag and Shift moves the page instead.
            */
-          if (board.allowed && e.shiftKey && (board.view?.scale || 1) > 1) {
+          if (board.canPan && (!board.canInk || e.shiftKey)) {
             e.preventDefault();
-            const start = { x: e.clientX, y: e.clientY, view: board.view };
-            const rect = e.currentTarget.getBoundingClientRect();
-            const onMove = (move) => {
-              const scale = start.view.scale;
-              board.setView?.({
-                scale,
-                tx: start.view.tx - (move.clientX - start.x) / ((rect.width || 1) * scale),
-                ty: start.view.ty - (move.clientY - start.y) / ((rect.height || 1) * scale),
-              });
-            };
-            const onUp = () => {
-              window.removeEventListener("mousemove", onMove);
-              window.removeEventListener("mouseup", onUp);
-            };
-            window.addEventListener("mousemove", onMove);
-            window.addEventListener("mouseup", onUp);
-            return;
+            if (board.panFrom(e)) return;
+          }
+          board.onDown(e);
+        }}
+        onDoubleClick={(e) => {
+          // The quickest way in and back out again: doubling to 200% where the
+          // pointer is, and doubling back to the whole page.
+          if (!board.allowed) return;
+          const r = e.currentTarget.getBoundingClientRect();
+          if ((board.view?.scale || 1) > 1) board.resetView();
+          else
+            board.zoomAt(2, {
+              x: (e.clientX - r.left) / (r.width || 1),
+              y: (e.clientY - r.top) / (r.height || 1),
+            });
+        }}
+        onTouchStart={(e) => {
+          // One finger moves a page that has been zoomed into; on a board that
+          // can be drawn on, one finger still draws.
+          if (board.canPan && !board.canInk && e.touches.length === 1) {
+            if (board.panFrom(e.touches[0])) return;
           }
           board.onDown(e);
         }}
         onMouseMove={board.onMove}
         onMouseUp={board.onUp}
         onMouseLeave={board.onUp}
-        onTouchStart={board.onDown}
         onTouchMove={board.onMove}
         onTouchEnd={board.onUp}
         style={{
-          // A board showing a page is not a board to write on, and the cursor
-          // says so before anybody tries.
-          cursor: board.canInk ? (erasing ? "cell" : "crosshair") : "default",
+          /**
+           * The cursor is the only place this is explained, so it has to be
+           * right: a crosshair where ink will land, a hand where the page can
+           * be dragged, and neither where nothing will happen.
+           */
+          cursor: board.canPan && !board.canInk
+            ? "grab"
+            : board.canInk
+              ? erasing
+                ? "cell"
+                : "crosshair"
+              : "default",
           width: "100%",
           height: "100%",
           display: "block",
@@ -300,6 +313,10 @@ export default function Whiteboard({ board, onPlayVideo, onYouTube }) {
             }}
           />
         </>
+      ) : null}
+
+      {board.canPan && !board.canInk ? (
+        <div className="board-pan-hint">Drag to move · double-click to fit</div>
       ) : null}
 
       {board.pasting ? <div className="board-busy">Sharing the picture…</div> : null}
