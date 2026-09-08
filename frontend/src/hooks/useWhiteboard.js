@@ -122,45 +122,6 @@ export function useWhiteboard({
     setViewState(viewRef.current);
   }, []);
 
-  /**
-   * Eases the view to where it is going, redrawing every frame.
-   *
-   * Zoom used to jump: one press, one instant redraw at the new scale, which
-   * reads as the page being replaced rather than approached. A sixth of a
-   * second of movement is enough for the eye to follow the page in and keep
-   * its place on it.
-   *
-   * A pan does NOT come through here. A page being dragged has to track the
-   * mouse exactly, and easing towards the pointer would feel like dragging
-   * something through treacle.
-   */
-  const animateView = useCallback(
-    (target, ms = 170) => {
-      const from = viewRef.current;
-      const to = normalise(target);
-      cancelAnimationFrame(animRef.current);
-
-      const started = performance.now();
-      const step = (now) => {
-        const t = Math.min(1, (now - started) / ms);
-        // Ease out: quick to leave, gentle to arrive, which is how a zoom
-        // reads as one movement rather than a start and a stop.
-        const e = 1 - (1 - t) ** 3;
-        applyView({
-          scale: from.scale + (to.scale - from.scale) * e,
-          tx: from.tx + (to.tx - from.tx) * e,
-          ty: from.ty + (to.ty - from.ty) * e,
-        });
-        redraw();
-        if (t < 1) animRef.current = requestAnimationFrame(step);
-      };
-      animRef.current = requestAnimationFrame(step);
-    },
-    [applyView, redraw],
-  );
-
-  useEffect(() => () => cancelAnimationFrame(animRef.current), []);
-
   const redraw = useCallback(() => {
     try {
       const canvas = canvasRef.current;
@@ -222,6 +183,51 @@ export function useWhiteboard({
       console.error("[Whiteboard] redraw failed", err);
     }
   }, []);
+
+  /**
+   * Eases the view to where it is going, redrawing every frame.
+   *
+   * Declared AFTER redraw deliberately. A dependency array is evaluated during
+   * the render, so naming `redraw` from above its own declaration threw a
+   * ReferenceError every time this hook ran -- and with no error boundary in
+   * this app, that is a blank meeting rather than a broken zoom.
+   *
+   * Zoom used to jump: one press, one instant redraw at the new scale, which
+   * reads as the page being replaced rather than approached. A sixth of a
+   * second of movement is enough for the eye to follow the page in and keep
+   * its place on it.
+   *
+   * A pan does NOT come through here. A page being dragged has to track the
+   * mouse exactly, and easing towards the pointer would feel like dragging
+   * something through treacle.
+   */
+  const animateView = useCallback(
+    (target, ms = 170) => {
+      const from = viewRef.current;
+      const to = normalise(target);
+      cancelAnimationFrame(animRef.current);
+
+      const started = performance.now();
+      const step = (now) => {
+        const t = Math.min(1, (now - started) / ms);
+        // Ease out: quick to leave, gentle to arrive, which is how a zoom
+        // reads as one movement rather than a start and a stop.
+        const e = 1 - (1 - t) ** 3;
+        applyView({
+          scale: from.scale + (to.scale - from.scale) * e,
+          tx: from.tx + (to.tx - from.tx) * e,
+          ty: from.ty + (to.ty - from.ty) * e,
+        });
+        redraw();
+        if (t < 1) animRef.current = requestAnimationFrame(step);
+      };
+      animRef.current = requestAnimationFrame(step);
+    },
+    [applyView, redraw],
+  );
+
+  useEffect(() => () => cancelAnimationFrame(animRef.current), []);
+
 
   /**
    * Loads the board's picture, or clears it.
