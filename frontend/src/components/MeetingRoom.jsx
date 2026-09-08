@@ -778,7 +778,21 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
             {recording ? <div className="rec-pill">REC CLOUD</div> : null}
             {isStaff ? <RecordingStatus jobs={recJobs} /> : null}
             <div style={{ display: onBoard ? "block" : "none", width: "100%", height: "100%" }}>
-              <Whiteboard board={board} />
+              <Whiteboard
+                board={board}
+                // The right-click menu offers these two, because a teacher
+                // who wants to "put a video on the board" is looking at the
+                // board when they think it.
+                onPlayVideo={isStaff ? () => setVideoHelpOpen(true) : null}
+                onYouTube={
+                  isStaff
+                    ? () => {
+                        setYtError("");
+                        setYtOpen(true);
+                      }
+                    : null
+                }
+              />
             </div>
             {stageMode === "screen" && media.screenStream ? (
               <ScreenShare stream={media.screenStream} />

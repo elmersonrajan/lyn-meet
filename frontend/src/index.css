@@ -2381,3 +2381,38 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .board-pager button:disabled { opacity: 0.4; cursor: default; }
 .board-pager button:hover:not(:disabled) { background: var(--tint); }
+
+/* The board's own right-click menu. */
+.board-menu {
+  position: fixed;
+  z-index: 45;
+  min-width: 224px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: var(--shadow-lg);
+}
+
+.board-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--navy);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-menu-item:hover { background: var(--tint); }
+.board-menu-item.danger { color: var(--danger); }
+.board-menu-item.danger:hover { background: #fdf2f2; }
+
+.board-menu-hint { font-size: 11px; color: var(--muted); }
+.board-menu-sep { height: 1px; margin: 5px 4px; background: var(--border); }

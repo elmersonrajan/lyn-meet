@@ -1,11 +1,40 @@
 import React from "react";
 import { IconPen, IconEraser, IconTrash, IconDocument } from "./Icons.jsx";
+import BoardMenu from "./BoardMenu.jsx";
 
 const COLORS = ["#163a6b", "#d32f2f", "#1b8a4a", "#e08600", "#111827"];
 
-export default function Whiteboard({ board }) {
+export default function Whiteboard({ board, onPlayVideo, onYouTube }) {
   const erasing = board.tool === "eraser";
   const [dragging, setDragging] = React.useState(false);
+  const [menuAt, setMenuAt] = React.useState(null);
+  const imageInput = React.useRef(null);
+  const docInput = React.useRef(null);
+
+  /**
+   * What a right-click offers. Each item goes to whatever actually works for
+   * that kind of thing rather than pretending they are all the same: a picture
+   * and a document are sent to the class, while a video is played by sharing
+   * the tab it is in -- a lesson video is hundreds of megabytes and belongs on
+   * a live stream, not in a message.
+   */
+  const menuItems = [
+    {
+      key: "paste",
+      label: "Paste",
+      hint: "Ctrl+V",
+      onSelect: () => board.pasteFromClipboard?.(),
+    },
+    { key: "sep1", separator: true },
+    { key: "image", label: "Picture…", onSelect: () => imageInput.current?.click() },
+    { key: "doc", label: "PDF or Word document…", onSelect: () => docInput.current?.click() },
+    ...(onPlayVideo
+      ? [{ key: "video", label: "Video…", hint: "shares a tab", onSelect: onPlayVideo }]
+      : []),
+    ...(onYouTube ? [{ key: "yt", label: "YouTube…", onSelect: onYouTube }] : []),
+    { key: "sep2", separator: true },
+    { key: "clear", label: "Clear the board", danger: true, onSelect: board.clear },
+  ];
 
   /**
    * A picture can arrive by being dropped on the board as well as by Ctrl+V.
@@ -28,6 +57,13 @@ export default function Whiteboard({ board }) {
         e.preventDefault();
         setDragging(false);
         board.onDropFiles?.(e.dataTransfer);
+      }}
+      onContextMenu={(e) => {
+        // Students keep the browser's own menu: they have nothing to put on
+        // the board, and taking it away would only cost them "save image as".
+        if (!board.allowed) return;
+        e.preventDefault();
+        setMenuAt({ x: e.clientX, y: e.clientY });
       }}
     >
       <canvas
@@ -159,6 +195,36 @@ export default function Whiteboard({ board }) {
 
       {/* Only while something is on its way: a permanent instruction on the
           board would be another thing to read every lesson. */}
+      {board.allowed ? (
+        <>
+          <BoardMenu at={menuAt} onClose={() => setMenuAt(null)} items={menuItems} />
+          {/* The pickers the menu opens. Hidden rather than rendered on demand,
+              so a click has something to reach immediately. */}
+          <input
+            ref={imageInput}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) board.sendImage?.(file);
+            }}
+          />
+          <input
+            ref={docInput}
+            type="file"
+            accept=".pdf,.doc,.docx,.odt,.rtf,.ppt,.pptx,.odp,application/pdf"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) board.sendDocument?.(file);
+            }}
+          />
+        </>
+      ) : null}
+
       {board.pasting ? <div className="board-busy">Sharing the picture…</div> : null}
       {dragging ? <div className="board-dropzone">Drop the picture onto the board</div> : null}
     </div>

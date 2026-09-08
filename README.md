@@ -196,6 +196,12 @@ teacher can add or switch, and switching moves the whole class: the strokes
 travel with the switch, so a tab change, a late join and a reconnect all end in
 the same picture. The recording follows whichever board the class is on.
 
+**Right-click the board** for a menu: Paste, Picture…, PDF or Word document…,
+Video… (which shares the tab it is playing in), YouTube…, and Clear. Ctrl+V and
+dropping a file work as well; the menu exists because neither is discoverable
+and right-clicking a board is what somebody tries when they want to put
+something on it.
+
 **Paste a picture onto a whiteboard.** Ctrl+V, or drop the file on the board.
 Teacher only, and it appears for the whole class under the strokes, so the
 picture is the page and the drawing is the working on it. A diagram, a photo of
