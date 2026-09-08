@@ -204,9 +204,12 @@ makes nonsense of them. Zoom, page turns and Clear stay -- **Clear** is the way
 back to a board that can be written on. The server refuses strokes for a board
 that is showing a page, so this is a rule rather than a hidden button.
 
-**Zoom into a page.** The `−  100%  +` controls on the board tools, Ctrl and the
-scroll wheel to zoom where the pointer is, or Ctrl with `+` `-` `0`; Shift and
-drag moves the page once zoomed. All of these zoom **the board only** -- the
+**Zoom into a page.** The `−  100%  +` controls, Ctrl and the scroll wheel to
+zoom where the pointer is, Ctrl with `+` `-` `0`, or a double-click to go
+straight to 200% and back. Once zoomed, **drag the page with the mouse** to move
+it -- a plain drag, because a page on the board cannot be drawn on anyway. On a
+writable board the pen keeps the plain drag and Shift moves the page. Zooming
+eases into place rather than jumping, and a wheel is followed step for step. All of these zoom **the board only** -- the
 toolbar, roster and video tiles stay where they are, which is not what Chrome's
 own zoom does with them. **The whole class zooms with the teacher** -- magnifying a
 paragraph is pointing at it, and forty people still seeing the whole page have

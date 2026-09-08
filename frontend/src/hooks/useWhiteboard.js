@@ -103,15 +103,63 @@ export function useWhiteboard({
   const viewRef = useRef(initialView || { scale: 1, tx: 0, ty: 0 });
   const [view, setViewState] = useState(viewRef.current);
 
-  const applyView = useCallback((next) => {
+  /** Animation in flight, so a second zoom replaces the first rather than fighting it. */
+  const animRef = useRef(0);
+  /** The last view sent, and when, so a drag does not become a flood of messages. */
+  const sentRef = useRef({ at: 0, timer: 0 });
+
+  const normalise = (next) => {
     const scale = Math.min(6, Math.max(1, Number(next?.scale) || 1));
     // The only place there is to pan is the part of the page that zooming in
     // pushed off the edge; at a scale of 1 there is nowhere to go.
     const room = (1 - 1 / scale) / 2;
     const clamp = (value) => Math.min(room, Math.max(-room, Number(value) || 0));
-    viewRef.current = { scale, tx: clamp(next?.tx), ty: clamp(next?.ty) };
+    return { scale, tx: clamp(next?.tx), ty: clamp(next?.ty) };
+  };
+
+  const applyView = useCallback((next) => {
+    viewRef.current = normalise(next);
     setViewState(viewRef.current);
   }, []);
+
+  /**
+   * Eases the view to where it is going, redrawing every frame.
+   *
+   * Zoom used to jump: one press, one instant redraw at the new scale, which
+   * reads as the page being replaced rather than approached. A sixth of a
+   * second of movement is enough for the eye to follow the page in and keep
+   * its place on it.
+   *
+   * A pan does NOT come through here. A page being dragged has to track the
+   * mouse exactly, and easing towards the pointer would feel like dragging
+   * something through treacle.
+   */
+  const animateView = useCallback(
+    (target, ms = 170) => {
+      const from = viewRef.current;
+      const to = normalise(target);
+      cancelAnimationFrame(animRef.current);
+
+      const started = performance.now();
+      const step = (now) => {
+        const t = Math.min(1, (now - started) / ms);
+        // Ease out: quick to leave, gentle to arrive, which is how a zoom
+        // reads as one movement rather than a start and a stop.
+        const e = 1 - (1 - t) ** 3;
+        applyView({
+          scale: from.scale + (to.scale - from.scale) * e,
+          tx: from.tx + (to.tx - from.tx) * e,
+          ty: from.ty + (to.ty - from.ty) * e,
+        });
+        redraw();
+        if (t < 1) animRef.current = requestAnimationFrame(step);
+      };
+      animRef.current = requestAnimationFrame(step);
+    },
+    [applyView, redraw],
+  );
+
+  useEffect(() => () => cancelAnimationFrame(animRef.current), []);
 
   const redraw = useCallback(() => {
     try {
@@ -272,25 +320,58 @@ export function useWhiteboard({
    * clamps it and owns it, so a late joiner and a board switch both land on
    * the same view instead of on whatever this browser last did.
    */
-  const setView = useCallback(
-    async (next) => {
+  /**
+   * Tells the class where the page is, at most a dozen times a second.
+   *
+   * A drag produces a mouse event every frame. Sending each one would put
+   * sixty messages a second on the wire to move one page, and the last of them
+   * is the only one that matters -- so the rest are dropped and a trailing
+   * send makes sure the final position is not one of the dropped ones.
+   */
+  const publishView = useCallback(
+    (immediate = false) => {
       if (!allowed) return;
-      // Applied here as well, so the teacher's own zoom does not wait for a
-      // round trip to feel like it happened.
-      applyView(next);
-      redraw();
-      try {
-        await emitAck("whiteboard-view", viewRef.current);
-      } catch (err) {
-        console.error("[Whiteboard] zoom failed", err);
-      }
+      const send = () => {
+        sentRef.current.at = performance.now();
+        emitAck("whiteboard-view", viewRef.current).catch((err) =>
+          console.error("[Whiteboard] zoom failed", err),
+        );
+      };
+      clearTimeout(sentRef.current.timer);
+      const since = performance.now() - sentRef.current.at;
+      if (immediate || since > 80) send();
+      else sentRef.current.timer = setTimeout(send, 80 - since);
     },
-    [allowed, applyView, redraw],
+    [allowed],
   );
 
-  /** Zooms about a point on the board, given in 0..1 board units. */
+  /** Moves the class's view of the page, easing into place. */
+  const setView = useCallback(
+    (next, { animate = true } = {}) => {
+      if (!allowed) return;
+      // Applied locally as well as sent, so the teacher's own zoom does not
+      // wait on a round trip to feel like it happened.
+      if (animate) animateView(next);
+      else {
+        applyView(next);
+        redraw();
+      }
+      publishView(!animate ? false : true);
+    },
+    [allowed, animateView, applyView, redraw, publishView],
+  );
+
+  /**
+   * Zooms about a point on the board, given in 0..1 board units.
+   *
+   * @param {number} factor
+   * @param {{x:number,y:number}} at
+   * @param {{animate?: boolean}} opts a wheel already arrives as a stream of
+   *   small steps, so animating each one would lag behind the fingers; a
+   *   button press is one step and wants easing.
+   */
   const zoomAt = useCallback(
-    (factor, at = { x: 0.5, y: 0.5 }) => {
+    (factor, at = { x: 0.5, y: 0.5 }, { animate = true } = {}) => {
       const current = viewRef.current;
       const scale = Math.min(6, Math.max(1, current.scale * factor));
       /**
@@ -302,13 +383,66 @@ export function useWhiteboard({
        */
       const offset = (pointer, translate) =>
         translate + (pointer - 0.5 - translate) * (1 - current.scale / scale);
-      setView({
-        scale,
-        tx: offset(at.x, current.tx),
-        ty: offset(at.y, current.ty),
-      });
+      setView(
+        { scale, tx: offset(at.x, current.tx), ty: offset(at.y, current.ty) },
+        { animate },
+      );
     },
     [setView],
+  );
+
+  /**
+   * Dragging the page with the mouse.
+   *
+   * Shift and drag was the only way to move a zoomed page, which is to say
+   * there was no way to move it: nobody finds a modifier nobody mentioned.
+   * Now a plain drag moves it whenever the board is not also a surface to draw
+   * on -- which is exactly when a page is up, and exactly when somebody
+   * zoomed in. On a writable board the pen keeps the plain drag and Shift
+   * moves the page.
+   *
+   * No easing: a page being dragged has to sit under the pointer, and easing
+   * towards it would feel like dragging something through treacle.
+   */
+  const panFrom = useCallback(
+    (event) => {
+      if (!allowed || viewRef.current.scale <= 1) return false;
+      const canvas = canvasRef.current;
+      if (!canvas) return false;
+      const rect = canvas.getBoundingClientRect();
+      const start = {
+        x: event.clientX,
+        y: event.clientY,
+        view: viewRef.current,
+      };
+      cancelAnimationFrame(animRef.current);
+
+      const move = (e) => {
+        const point = e.touches ? e.touches[0] : e;
+        const scale = start.view.scale;
+        applyView({
+          scale,
+          tx: start.view.tx - (point.clientX - start.x) / ((rect.width || 1) * scale),
+          ty: start.view.ty - (point.clientY - start.y) / ((rect.height || 1) * scale),
+        });
+        redraw();
+        publishView();
+      };
+      const up = () => {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+        window.removeEventListener("touchmove", move);
+        window.removeEventListener("touchend", up);
+        // The dropped middle of a drag does not matter; where it ended does.
+        publishView(true);
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+      window.addEventListener("touchmove", move, { passive: false });
+      window.addEventListener("touchend", up);
+      return true;
+    },
+    [allowed, applyView, redraw, publishView],
   );
 
   /**
@@ -472,10 +606,23 @@ export function useWhiteboard({
       if (!(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
-      zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, {
-        x: (e.clientX - rect.left) / (rect.width || 1),
-        y: (e.clientY - rect.top) / (rect.height || 1),
-      });
+      /**
+       * Proportional to how hard the wheel was turned, and unanimated.
+       *
+       * A wheel already arrives as a stream of small steps, so easing each one
+       * would leave the page trailing the fingers. A trackpad sends many tiny
+       * deltas and a mouse wheel a few large ones; taking the size into account
+       * makes both feel like the same gesture.
+       */
+      const step = Math.exp(-Math.max(-100, Math.min(100, e.deltaY)) * 0.0022);
+      zoomAt(
+        step,
+        {
+          x: (e.clientX - rect.left) / (rect.width || 1),
+          y: (e.clientY - rect.top) / (rect.height || 1),
+        },
+        { animate: false },
+      );
     };
 
     canvas.addEventListener("wheel", onWheel, { passive: false });
@@ -597,8 +744,9 @@ export function useWhiteboard({
     // every browser, and re-sending it to move one page would be absurd.
     // The teacher moved everyone's view of the page.
     const onView = ({ view: next }) => {
-      applyView(next);
-      redraw();
+      // Eased, so a class following a teacher's zoom sees the page move rather
+      // than jump between positions eighty milliseconds apart.
+      animateView(next, 120);
     };
 
     const onPage = ({ page }) => {
@@ -622,7 +770,7 @@ export function useWhiteboard({
       socket.off("whiteboard-page", onPage);
       socket.off("whiteboard-view", onView);
     };
-  }, [socket, redraw, applyImage, applyDocument, applyView, setShowingContent]);
+  }, [socket, redraw, applyImage, applyDocument, applyView, animateView, setShowingContent]);
 
   /**
    * Where on the PAGE a pointer is, not where on the screen.
@@ -739,6 +887,9 @@ export function useWhiteboard({
     view,
     zoomAt,
     setView,
+    panFrom,
+    /** Whether a plain drag moves the page rather than drawing on it. */
+    canPan: allowed && view.scale > 1,
     resetView: () => setView({ scale: 1, tx: 0, ty: 0 }),
     // What is on the board, for the page controls: null unless a document is
     // open on it.

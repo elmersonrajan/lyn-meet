@@ -2483,3 +2483,19 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   from { opacity: 0; transform: translateX(12px); }
   to { opacity: 1; transform: translateX(0); }
 }
+
+/* Said once, to whoever has just zoomed in and might not know the page moves. */
+.board-pan-hint {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  transform: translateX(-50%);
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: rgba(15, 42, 77, 0.72);
+  color: #fff;
+  font-size: 11.5px;
+  pointer-events: none;
+}
+
+.board-drop:active .board-pan-hint { opacity: 0; }
