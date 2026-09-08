@@ -148,6 +148,7 @@ class CloudRecorder {
       const cam = camProducer ? await this._attach(camProducer, "video") : null;
       const screen = screenProducer ? await this._attach(screenProducer, "screen") : null;
 
+
       this.hasAudio = Boolean(audio);
       // Video stream indexes within the output, in SDP order.
       let v = 0;
@@ -209,6 +210,13 @@ class CloudRecorder {
       this._writeBoardSnapshot();
       this.frameTimer = setInterval(() => this._writeBoardSnapshot(), 1000 / BOARD_FPS);
 
+      if (screenPeer) {
+        this.addScreenAudio(screenPeer).catch((err) => log.error("seed screen audio failed", err));
+      }
+      if (stagePeer) {
+        this.addStageAudio(stagePeer).catch((err) => log.error("seed stage audio failed", err));
+      }
+
       // Anyone already unmuted when recording began. Started without waiting so
       // pressing record stays instant; each capture carries its own offset, so
       // arriving a moment late costs a second of that voice, not its place.
@@ -230,7 +238,7 @@ class CloudRecorder {
       log.error("start failed", err);
       // Release the ports and transports, but queue nothing: there is no
       // capture to render.
-      await this._teardown().catch(() => {});
+      await this._teardown().catch(() => { });
       throw err;
     }
   }
@@ -461,7 +469,7 @@ class CloudRecorder {
   async addScreenAudio(peer) {
     try {
       if (!this.active || !peer) return null;
-      if (this.sides.some((s) => s.kind === "audio" && s.peerId === peer.id && s.screen)) {
+      if (this.sides.some((s) => s.kind === "audio" && s.peerId === peer.id && s.screen && !s.stage)) {
         return null;
       }
       if (this.sides.length >= MAX_SIDES) {
@@ -477,6 +485,28 @@ class CloudRecorder {
       return await this._startSide({ producer, peer, kind: "audio", screen: true });
     } catch (err) {
       log.error("addScreenAudio failed — recording continues without it", err);
+      return null;
+    }
+  }
+
+  async addStageAudio(peer) {
+    try {
+      if (!this.active || !peer) return null;
+      if (this.sides.some((s) => s.kind === "audio" && s.peerId === peer.id && s.stage)) {
+        return null;
+      }
+      if (this.sides.length >= MAX_SIDES) {
+        log.warn("stage audio not recorded — too many side captures", { max: MAX_SIDES });
+        return null;
+      }
+      const producer = this.room.findProducer(peer.id, "stage-audio");
+      if (!producer) return null;
+      log.action("capturing the sound of the recorded stage", { who: peer.name });
+      const side = await this._startSide({ producer, peer, kind: "audio", screen: true });
+      side.stage = true;
+      return side;
+    } catch (err) {
+      log.error("addStageAudio failed — recording continues without it", err);
       return null;
     }
   }
@@ -548,6 +578,7 @@ class CloudRecorder {
       // live: a recording of a lesson where a video was played to the class
       // should not be a recording of a silent video.
       if (source === "screen-audio") await this.addScreenAudio(peer);
+      if (source === "stage-audio") await this.addStageAudio(peer);
     } catch (err) {
       log.error("onProducerAdded failed — recording continues", err);
     }

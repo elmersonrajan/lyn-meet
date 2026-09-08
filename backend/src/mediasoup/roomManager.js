@@ -25,7 +25,7 @@ const SPEAKING_INTERVAL_MS = Number(process.env.SPEAKING_INTERVAL_MS || 400);
 const SPEAKING_MAX = Number(process.env.SPEAKING_MAX || 6);
 
 // Set by the socket layer, which owns the only way to reach the browsers.
-let speakingListener = () => {};
+let speakingListener = () => { };
 function onSpeaking(fn) {
   speakingListener = fn;
 }
@@ -188,11 +188,11 @@ class Room {
       image: board.image ? { id: board.image.id, url: board.image.url } : null,
       document: board.document
         ? {
-            id: board.document.id,
-            url: board.document.url,
-            name: board.document.name,
-            page: board.document.page,
-          }
+          id: board.document.id,
+          url: board.document.url,
+          name: board.document.name,
+          page: board.document.page,
+        }
         : null,
       view: board.view || FLAT_VIEW,
     };
@@ -416,7 +416,7 @@ class Room {
       // Sharing a screen with its sound publishes a second track, and it is
       // staff-only for the same reason the picture is: a student publishing
       // "screen-audio" would be piping their machine into the lesson.
-      if (peer.role === "student" && source === "screen-audio") {
+      if (peer.role === "student" && (source === "screen-audio" || source === "stage-audio")) {
         throw new Error("Only staff can share sound from their screen");
       }
       /**
@@ -427,7 +427,7 @@ class Room {
       if (peer.role === "student" && source === "stage") {
         throw new Error("Only staff can publish the stage");
       }
-      if (!["audio", "video", "screen", "screen-audio", "stage"].includes(source)) {
+      if (!["audio", "video", "screen", "screen-audio", "stage", "stage-audio"].includes(source)) {
         throw new Error(`Unknown producer source "${source}"`);
       }
       log.action("produce", { peerId: peer.id, kind, source, role: peer.role });

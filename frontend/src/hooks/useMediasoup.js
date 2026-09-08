@@ -344,7 +344,7 @@ export function useMediasoup({ socket, role, peerId, enabled, profile }) {
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack && role === "teacher" && sendTransportRef.current) {
         // A face rather than a spreadsheet: the encoder is told so, and will
-                // spend its bits on faces rather than on edges.
+        // spend its bits on faces rather than on edges.
         try {
           videoTrack.contentHint = "motion";
         } catch (err) {
@@ -642,7 +642,11 @@ export function useMediasoup({ socket, role, peerId, enabled, profile }) {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { displaySurface: "browser", frameRate: { max: 15 } },
-        audio: false,
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
         // Chrome offers this tab first, so the teacher confirms rather than
         // hunting through a list of windows for the one they are looking at.
         preferCurrentTab: true,
@@ -662,6 +666,18 @@ export function useMediasoup({ socket, role, peerId, enabled, profile }) {
         appData: { source: "stage" },
       });
       producersRef.current.stage = producer;
+      const audioTrack = stream.getAudioTracks()[0];
+      if (audioTrack) {
+        producersRef.current["stage-audio"] = await sendTransportRef.current.produce({
+          track: audioTrack,
+          appData: { source: "stage-audio" },
+        });
+        console.log("[Mediasoup] stage capture started WITH sound");
+      } else {
+        console.warn(
+          "[Mediasoup] stage capture started without sound — select the browser tab and tick 'Share tab audio'",
+        );
+      }
       stageStreamRef.current = stream;
       // Stopping the capture from the browser's own bar ends the stage, and
       // the recording carries on with whatever else it has.
@@ -693,6 +709,20 @@ export function useMediasoup({ socket, role, peerId, enabled, profile }) {
       console.error("[Mediasoup] stage producer close failed", err);
     }
     producersRef.current.stage = null;
+    const audioProducer = producersRef.current["stage-audio"];
+    if (audioProducer) {
+      try {
+        await emitAck("close-producer", { source: "stage-audio" });
+      } catch (err) {
+        console.error("[Mediasoup] closing stage audio failed", err);
+      }
+      try {
+        audioProducer.close();
+      } catch (err) {
+        console.error("[Mediasoup] stage audio producer close failed", err);
+      }
+      producersRef.current["stage-audio"] = null;
+    }
     releaseStream(stageStreamRef.current);
     stageStreamRef.current = null;
     console.log("[Mediasoup] stage capture stopped");
