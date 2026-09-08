@@ -103,8 +103,6 @@ export function useWhiteboard({
   const viewRef = useRef(initialView || { scale: 1, tx: 0, ty: 0 });
   const [view, setViewState] = useState(viewRef.current);
 
-  /** Animation in flight, so a second zoom replaces the first rather than fighting it. */
-  const animRef = useRef(0);
   /** The last view sent, and when, so a drag does not become a flood of messages. */
   const sentRef = useRef({ at: 0, timer: 0 });
 
@@ -183,51 +181,6 @@ export function useWhiteboard({
       console.error("[Whiteboard] redraw failed", err);
     }
   }, []);
-
-  /**
-   * Eases the view to where it is going, redrawing every frame.
-   *
-   * Declared AFTER redraw deliberately. A dependency array is evaluated during
-   * the render, so naming `redraw` from above its own declaration threw a
-   * ReferenceError every time this hook ran -- and with no error boundary in
-   * this app, that is a blank meeting rather than a broken zoom.
-   *
-   * Zoom used to jump: one press, one instant redraw at the new scale, which
-   * reads as the page being replaced rather than approached. A sixth of a
-   * second of movement is enough for the eye to follow the page in and keep
-   * its place on it.
-   *
-   * A pan does NOT come through here. A page being dragged has to track the
-   * mouse exactly, and easing towards the pointer would feel like dragging
-   * something through treacle.
-   */
-  const animateView = useCallback(
-    (target, ms = 170) => {
-      const from = viewRef.current;
-      const to = normalise(target);
-      cancelAnimationFrame(animRef.current);
-
-      const started = performance.now();
-      const step = (now) => {
-        const t = Math.min(1, (now - started) / ms);
-        // Ease out: quick to leave, gentle to arrive, which is how a zoom
-        // reads as one movement rather than a start and a stop.
-        const e = 1 - (1 - t) ** 3;
-        applyView({
-          scale: from.scale + (to.scale - from.scale) * e,
-          tx: from.tx + (to.tx - from.tx) * e,
-          ty: from.ty + (to.ty - from.ty) * e,
-        });
-        redraw();
-        if (t < 1) animRef.current = requestAnimationFrame(step);
-      };
-      animRef.current = requestAnimationFrame(step);
-    },
-    [applyView, redraw],
-  );
-
-  useEffect(() => () => cancelAnimationFrame(animRef.current), []);
-
 
   /**
    * Loads the board's picture, or clears it.
@@ -351,20 +304,20 @@ export function useWhiteboard({
     [allowed],
   );
 
-  /** Moves the class's view of the page, easing into place. */
+  /**
+   * Moves the class's view of the page. Immediately, with no easing.
+   *
+   * Applied locally as well as sent, so the teacher's own zoom does not wait
+   * on a round trip to appear.
+   */
   const setView = useCallback(
-    (next, { animate = true } = {}) => {
+    (next) => {
       if (!allowed) return;
-      // Applied locally as well as sent, so the teacher's own zoom does not
-      // wait on a round trip to feel like it happened.
-      if (animate) animateView(next);
-      else {
-        applyView(next);
-        redraw();
-      }
-      publishView(!animate ? false : true);
+      applyView(next);
+      redraw();
+      publishView(true);
     },
-    [allowed, animateView, applyView, redraw, publishView],
+    [allowed, applyView, redraw, publishView],
   );
 
   /**
@@ -372,12 +325,9 @@ export function useWhiteboard({
    *
    * @param {number} factor
    * @param {{x:number,y:number}} at
-   * @param {{animate?: boolean}} opts a wheel already arrives as a stream of
-   *   small steps, so animating each one would lag behind the fingers; a
-   *   button press is one step and wants easing.
    */
   const zoomAt = useCallback(
-    (factor, at = { x: 0.5, y: 0.5 }, { animate = true } = {}) => {
+    (factor, at = { x: 0.5, y: 0.5 }) => {
       const current = viewRef.current;
       const scale = Math.min(6, Math.max(1, current.scale * factor));
       /**
@@ -389,10 +339,7 @@ export function useWhiteboard({
        */
       const offset = (pointer, translate) =>
         translate + (pointer - 0.5 - translate) * (1 - current.scale / scale);
-      setView(
-        { scale, tx: offset(at.x, current.tx), ty: offset(at.y, current.ty) },
-        { animate },
-      );
+      setView({ scale, tx: offset(at.x, current.tx), ty: offset(at.y, current.ty) });
     },
     [setView],
   );
@@ -421,8 +368,6 @@ export function useWhiteboard({
         y: event.clientY,
         view: viewRef.current,
       };
-      cancelAnimationFrame(animRef.current);
-
       const move = (e) => {
         const point = e.touches ? e.touches[0] : e;
         const scale = start.view.scale;
@@ -613,22 +558,16 @@ export function useWhiteboard({
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
       /**
-       * Proportional to how hard the wheel was turned, and unanimated.
+       * Proportional to how hard the wheel was turned.
        *
-       * A wheel already arrives as a stream of small steps, so easing each one
-       * would leave the page trailing the fingers. A trackpad sends many tiny
-       * deltas and a mouse wheel a few large ones; taking the size into account
-       * makes both feel like the same gesture.
+       * A trackpad sends many tiny deltas and a mouse wheel a few large ones;
+       * taking the size into account makes both feel like the same gesture.
        */
       const step = Math.exp(-Math.max(-100, Math.min(100, e.deltaY)) * 0.0022);
-      zoomAt(
-        step,
-        {
-          x: (e.clientX - rect.left) / (rect.width || 1),
-          y: (e.clientY - rect.top) / (rect.height || 1),
-        },
-        { animate: false },
-      );
+      zoomAt(step, {
+        x: (e.clientX - rect.left) / (rect.width || 1),
+        y: (e.clientY - rect.top) / (rect.height || 1),
+      });
     };
 
     canvas.addEventListener("wheel", onWheel, { passive: false });
@@ -746,15 +685,14 @@ export function useWhiteboard({
       }
     };
 
-    // A page turn is a number, not a board: the document is already open in
-    // every browser, and re-sending it to move one page would be absurd.
     // The teacher moved everyone's view of the page.
     const onView = ({ view: next }) => {
-      // Eased, so a class following a teacher's zoom sees the page move rather
-      // than jump between positions eighty milliseconds apart.
-      animateView(next, 120);
+      applyView(next);
+      redraw();
     };
 
+    // A page turn is a number, not a board: the document is already open in
+    // every browser, and re-sending it to move one page would be absurd.
     const onPage = ({ page }) => {
       setDocumentState((current) => {
         if (!current) return current;
@@ -776,7 +714,7 @@ export function useWhiteboard({
       socket.off("whiteboard-page", onPage);
       socket.off("whiteboard-view", onView);
     };
-  }, [socket, redraw, applyImage, applyDocument, applyView, animateView, setShowingContent]);
+  }, [socket, redraw, applyImage, applyDocument, applyView, setShowingContent]);
 
   /**
    * Where on the PAGE a pointer is, not where on the screen.
