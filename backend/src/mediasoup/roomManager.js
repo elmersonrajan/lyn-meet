@@ -40,6 +40,9 @@ const ROLES = new Set(["teacher", "student", "coordinator"]);
  */
 const MAX_BOARDS = 20;
 
+/** Zoomed all the way out, which is where every board starts. */
+const FLAT_VIEW = { scale: 1, tx: 0, ty: 0 };
+
 function normalizeRole(role) {
   const r = String(role || "student").toLowerCase();
   if (r === "co-ordinator" || r === "co_ordinator" || r === "admin") return "coordinator";
@@ -116,7 +119,10 @@ class Room {
     // `image` is a picture pasted onto the board, which the strokes are drawn
     // over. One per board: pasting again replaces it, which is what "paste"
     // means everywhere else.
-    this.boards = [{ id: "b1", strokes: [], image: null, document: null }];
+    // `view` is how far into the page the class is looking: a scale and an
+    // offset in units of the board itself, so it means the same thing on a
+    // phone and on a projector.
+    this.boards = [{ id: "b1", strokes: [], image: null, document: null, view: FLAT_VIEW }];
     this.activeBoardId = "b1";
     this.boardSeq = 1;
     this.polls = [];
@@ -188,6 +194,7 @@ class Room {
             page: board.document.page,
           }
         : null,
+      view: board.view || FLAT_VIEW,
     };
   }
 
@@ -199,7 +206,13 @@ class Room {
     // moment late must not be able to hit a board that has taken the number of
     // the one it meant.
     this.boardSeq += 1;
-    const board = { id: `b${this.boardSeq}`, strokes: [], image: null, document: null };
+    const board = {
+      id: `b${this.boardSeq}`,
+      strokes: [],
+      image: null,
+      document: null,
+      view: FLAT_VIEW,
+    };
     this.boards.push(board);
     this.activeBoardId = board.id;
     return board;

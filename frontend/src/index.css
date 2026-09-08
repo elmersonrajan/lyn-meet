@@ -2416,3 +2416,70 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .board-menu-hint { font-size: 11px; color: var(--muted); }
 .board-menu-sep { height: 1px; margin: 5px 4px; background: var(--border); }
+
+/* The zoom level, which doubles as the way back to the whole page. */
+.board-tool.board-zoom-level {
+  width: auto;
+  min-width: 52px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Muting one student, from their row in the roster. */
+.mute-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mute-btn:hover:not(:disabled) { background: var(--tint); color: var(--navy); border-color: #a9c0e2; }
+.mute-btn:disabled { opacity: 0.35; cursor: default; }
+
+/* Somebody left. Top-right, under the stage tools, gone in five seconds. */
+.presence-stack {
+  position: fixed;
+  top: 58px;
+  right: 18px;
+  z-index: 42;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.presence-pop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: var(--shadow);
+  font-size: 12.5px;
+  animation: presence-in 180ms ease-out;
+}
+
+.presence-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.presence-name { font-weight: 700; color: var(--navy); }
+.presence-what { color: var(--muted); }
+
+@keyframes presence-in {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}

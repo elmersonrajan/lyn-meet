@@ -119,6 +119,30 @@ function mediaPublic(room, now = Date.now()) {
   };
 }
 
+/**
+ * How far into a board the class is looking, kept sane.
+ *
+ * A client sends what its own gestures produced, which means anything: a
+ * negative scale, an offset a thousand boards away, NaN from an arithmetic
+ * mistake. Everyone in the room is moved by this, so it is clamped here rather
+ * than trusted -- an unreadable board for forty people is a worse outcome than
+ * a zoom that refuses to go further.
+ */
+const MAX_SCALE = 6;
+
+function clampView({ scale, tx, ty } = {}) {
+  const number = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
+  const zoom = Math.min(MAX_SCALE, Math.max(1, number(scale, 1)));
+  /**
+   * The furthest the view can be moved is the part of the page that is off
+   * screen, which is what zooming in creates. At a scale of 1 there is nothing
+   * outside the board, so there is nowhere to pan to.
+   */
+  const room = (1 - 1 / zoom) / 2;
+  const limit = (value) => Math.min(room, Math.max(-room, number(value, 0)));
+  return { scale: Number(zoom.toFixed(3)), tx: Number(limit(tx).toFixed(4)), ty: Number(limit(ty).toFixed(4)) };
+}
+
 /** Tabs plus which one is live, the pair every board message carries. */
 function boardsPublic(room) {
   return { boards: room.boardTabs(), activeBoardId: room.activeBoardId };
@@ -126,6 +150,7 @@ function boardsPublic(room) {
 
 module.exports = {
   APPRECIATIONS,
+  clampView,
   youtubeId,
   cleanTitle,
   buildMedia,

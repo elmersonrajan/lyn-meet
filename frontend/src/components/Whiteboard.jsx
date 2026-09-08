@@ -68,7 +68,46 @@ export default function Whiteboard({ board, onPlayVideo, onYouTube }) {
     >
       <canvas
         ref={board.canvasRef}
-        onMouseDown={board.onDown}
+        onWheel={(e) => {
+          // Only with a modifier: a bare wheel over a board should scroll the
+          // page like anything else, and a teacher who meant to zoom will say
+          // so with Ctrl.
+          if (!board.allowed || !(e.ctrlKey || e.metaKey)) return;
+          e.preventDefault();
+          const r = e.currentTarget.getBoundingClientRect();
+          board.zoomAt?.(e.deltaY < 0 ? 1.15 : 1 / 1.15, {
+            x: (e.clientX - r.left) / (r.width || 1),
+            y: (e.clientY - r.top) / (r.height || 1),
+          });
+        }}
+        onMouseDown={(e) => {
+          /**
+           * Shift turns a drag into moving the page rather than drawing on it.
+           * Zoomed in, the part somebody wants is usually not the part in the
+           * middle, and a pan tool would be another mode to be stuck in.
+           */
+          if (board.allowed && e.shiftKey && (board.view?.scale || 1) > 1) {
+            e.preventDefault();
+            const start = { x: e.clientX, y: e.clientY, view: board.view };
+            const rect = e.currentTarget.getBoundingClientRect();
+            const onMove = (move) => {
+              const scale = start.view.scale;
+              board.setView?.({
+                scale,
+                tx: start.view.tx - (move.clientX - start.x) / ((rect.width || 1) * scale),
+                ty: start.view.ty - (move.clientY - start.y) / ((rect.height || 1) * scale),
+              });
+            };
+            const onUp = () => {
+              window.removeEventListener("mousemove", onMove);
+              window.removeEventListener("mouseup", onUp);
+            };
+            window.addEventListener("mousemove", onMove);
+            window.addEventListener("mouseup", onUp);
+            return;
+          }
+          board.onDown(e);
+        }}
         onMouseMove={board.onMove}
         onMouseUp={board.onUp}
         onMouseLeave={board.onUp}
@@ -123,6 +162,41 @@ export default function Whiteboard({ board, onPlayVideo, onYouTube }) {
           ))}
 
           <span className="board-sep" />
+
+          <span className="board-sep" />
+
+          {/* Zoom moves the whole class's view: a teacher magnifying a
+              paragraph is pointing at it, and forty people still seeing the
+              whole page have not been shown anything. */}
+          <button
+            type="button"
+            className="board-tool"
+            onClick={() => board.zoomAt?.(1 / 1.4)}
+            disabled={(board.view?.scale || 1) <= 1}
+            title="Zoom out"
+            aria-label="Zoom out"
+          >
+            −
+          </button>
+          <button
+            type="button"
+            className="board-tool board-zoom-level"
+            onClick={board.resetView}
+            disabled={(board.view?.scale || 1) === 1}
+            title="Back to the whole page"
+          >
+            {Math.round((board.view?.scale || 1) * 100)}%
+          </button>
+          <button
+            type="button"
+            className="board-tool"
+            onClick={() => board.zoomAt?.(1.4)}
+            disabled={(board.view?.scale || 1) >= 6}
+            title="Zoom in — hold Ctrl and scroll to zoom where the pointer is"
+            aria-label="Zoom in"
+          >
+            +
+          </button>
 
           <span className="board-sep" />
 

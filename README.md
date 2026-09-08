@@ -143,6 +143,7 @@ Students do not open ports. Only the office server router.
 | Post messages & polls | yes | yes | no — read and vote only |
 | Raise hand | yes | yes | yes |
 | Record, mute all, close session | yes | yes | no |
+| Mute one student, from their row | yes | yes | no |
 | View attendance | no | **yes** | no |
 
 Coordinators always appear as **ADMIN**; the name is fixed on the server, not
@@ -195,6 +196,14 @@ have come and gone. Only the
 teacher can add or switch, and switching moves the whole class: the strokes
 travel with the switch, so a tab change, a late join and a reconnect all end in
 the same picture. The recording follows whichever board the class is on.
+
+**Zoom into a page.** The `−  100%  +` controls on the board tools, or Ctrl and
+the scroll wheel to zoom where the pointer is; Shift and drag moves the page
+once zoomed. **The whole class zooms with the teacher** -- magnifying a
+paragraph is pointing at it, and forty people still seeing the whole page have
+not been shown anything. The zoom belongs to the board, so it travels with a
+tab switch and reaches a late joiner. Strokes are drawn through the same
+transform, so a circle round a word stays round that word at any zoom.
 
 **Right-click the board** for a menu: Paste, Picture…, PDF or Word document…,
 Video… (which shares the tab it is playing in), YouTube…, and Clear. Ctrl+V and

@@ -11,6 +11,7 @@ import Whiteboard from "./Whiteboard.jsx";
 import WhiteboardTabs from "./WhiteboardTabs.jsx";
 import SharedMedia from "./SharedMedia.jsx";
 import Appreciation from "./Appreciation.jsx";
+import PresencePopup from "./PresencePopup.jsx";
 import ConfirmDialog from "./ConfirmDialog.jsx";
 import YouTubeDialog from "./YouTubeDialog.jsx";
 import ScreenShare from "./ScreenShare.jsx";
@@ -69,6 +70,9 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   const [ytOpen, setYtOpen] = useState(false);
   const [ytError, setYtError] = useState("");
   const [endingSession, setEndingSession] = useState(false);
+  // Who has just left, each shown for five seconds. Staff only: a student
+  // watching thirty of these would be watching thirty of these.
+  const [presence, setPresence] = useState([]);
 
   const selfId = session.peer?.id;
   const handRaised = participants.some((p) => p.id === selfId && p.handRaised);
@@ -110,6 +114,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     initialImage: joinPayload.boardImage || null,
     // A document already open on the board this browser is joining into.
     initialDocument: joinPayload.boardDocument || null,
+    // How far into the page the class is already looking.
+    initialView: joinPayload.boardView || null,
     onError: showToast,
   });
 
@@ -159,6 +165,25 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       console.log("[MeetingRoom] peer-left", peer);
       setParticipants((prev) => prev.filter((p) => p.id !== peer.id));
       if (peer.role === "teacher") setTeacherDisconnected(false);
+      /**
+       * Said out loud, for five seconds.
+       *
+       * A name vanishing from a list of thirty is easy to miss while teaching,
+       * and this is the presence a teacher actually needs to know about. Kept
+       * to staff: a student would see one of these every time anybody's
+       * connection hiccuped.
+       */
+      if (isStaff && peer.id !== session.peer?.id) {
+        setPresence((prev) => [
+          ...prev.slice(-3),
+          {
+            id: `${peer.id}-${Date.now()}`,
+            name: peer.name || "Someone",
+            what: peer.role === "student" ? "left the meeting" : `(${peer.role}) left the meeting`,
+            at: Date.now(),
+          },
+        ]);
+      }
     };
     const onStage = ({ mode }) => setStageMode(mode);
     // The class watches what the server says is playing, wherever it has got
@@ -213,6 +238,11 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       setPolls((prev) => prev.map((p) => (p.id === pollId ? { ...p, totalVotes } : p)));
     };
     const onMicLocked = ({ reason }) => show(reason || "Mic disabled");
+    // Somebody muted this person in particular. The mic is already off by the
+    // time this arrives -- the message is so they know why, and by whom.
+    const onForceMute = (payload) => {
+      if (payload?.reason) show(payload.reason);
+    };
     const onJoinedMuted = ({ reason }) => show(reason || "You joined muted");
     const onHandChanged = (payload) => {
       // Staff get told when a hand goes up; nobody needs a toast for their own.
@@ -294,6 +324,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     socket.on("hands-cleared", onHandsCleared);
     socket.on("reaction-changed", onReactionChanged);
     socket.on("reactions-cleared", onReactionsCleared);
+    socket.on("force-mute", onForceMute);
     socket.on("shared-media", onMediaShared);
     socket.on("shared-media-state", onMediaState);
     socket.on("shared-media-stopped", onMediaStopped);
@@ -327,6 +358,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       socket.off("reaction-changed", onReactionChanged);
       socket.off("reactions-cleared", onReactionsCleared);
       socket.off("hands-cleared", onHandsCleared);
+      socket.off("force-mute", onForceMute);
       socket.off("shared-media", onMediaShared);
       socket.off("shared-media-state", onMediaState);
       socket.off("shared-media-stopped", onMediaStopped);
@@ -645,6 +677,23 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     }
   };
 
+  /**
+   * Mutes one student.
+   *
+   * Only mutes. Turning somebody's microphone back on for them would decide
+   * on their behalf that their room is being listened to again, which is not a
+   * teacher's decision to make -- the student unmutes themselves.
+   */
+  const onMuteOne = async (peerId) => {
+    if (!isStaff) return;
+    try {
+      await emitAck("mute-participant", { peerId });
+    } catch (err) {
+      console.error("[MeetingRoom] mute participant failed", err);
+      setToast(err.message);
+    }
+  };
+
   const onRemove = async (peerId) => {
     try {
       await emitAck("remove-participant", { peerId });
@@ -826,6 +875,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
             selfId={selfId}
             speaking={speaking}
             onRemove={onRemove}
+            onMute={onMuteOne}
             onLowerHand={onLowerHand}
           />
         </aside>
@@ -901,6 +951,11 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
 
       {/* Above everything, briefly, for everyone in the room. */}
       <Appreciation award={award} onDone={() => setAward(null)} />
+
+      <PresencePopup
+        events={presence}
+        onExpire={(id) => setPresence((prev) => prev.filter((e) => e.id !== id))}
+      />
 
       {/*
         The one thing that goes wrong when a teacher shares a video: Chrome's
