@@ -688,6 +688,18 @@ function attachSocketHandlers(io) {
         const peer = room?.peers.get(socket.data.peerId);
         // Teacher only — hiding the palette is not enough on its own.
         requireTeacher(peer);
+        /**
+         * A board showing a picture or a document is not written on.
+         *
+         * Hiding the pen is what the teacher sees; this is what makes it true.
+         * A stroke arriving from an older tab, or from anything that is not
+         * this application, would otherwise land across the page everyone is
+         * reading.
+         */
+        const target = room.activeBoard();
+        if (target.image || target.document) {
+          throw new Error("Clear the board before writing on it");
+        }
         const cw = Number(stroke.canvasWidth) || 1280;
         const ch = Number(stroke.canvasHeight) || 720;
         const normalized = {
@@ -819,6 +831,14 @@ function attachSocketHandlers(io) {
         board.image = stored;
         // A board shows one thing at a time.
         board.document = null;
+        /**
+         * The working goes with the page it was working on.
+         *
+         * A board showing a picture is showing a picture; strokes left from
+         * whatever was drawn before it would sit across the diagram in
+         * positions that meant something else.
+         */
+        board.strokes = [];
         // A new page starts flat: a zoom left over from the last one would
         // open this one halfway into a corner.
         board.view = { scale: 1, tx: 0, ty: 0 };
@@ -885,6 +905,8 @@ function attachSocketHandlers(io) {
         board.document = { ...stored, page: 1 };
         // A board shows one thing at a time.
         board.image = null;
+        // The working goes with the page it was working on.
+        board.strokes = [];
         // A new page starts flat: a zoom left over from the last one would
         // open this one halfway into a corner.
         board.view = { scale: 1, tx: 0, ty: 0 };

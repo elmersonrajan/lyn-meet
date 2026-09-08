@@ -73,6 +73,21 @@ export function useWhiteboard({
   const imageRef = useRef(null);
   const [pasting, setPasting] = useState(false);
   /**
+   * Whether the board is showing a page rather than being a page.
+   *
+   * A picture or a document is put up to be read, not written on: strokes
+   * across a diagram sit in positions that mean something about the diagram,
+   * and a page turn makes nonsense of them. Held as a ref because the pointer
+   * handlers are called from events rather than from a render.
+   */
+  const showingRef = useRef(Boolean(initialImage || initialDocument));
+  const [showing, setShowing] = useState(showingRef.current);
+
+  const setShowingContent = useCallback((value) => {
+    showingRef.current = Boolean(value);
+    setShowing(showingRef.current);
+  }, []);
+  /**
    * The open document, kept so that turning a page renders from the file
    * already parsed rather than fetching and parsing it again.
    */
@@ -539,8 +554,10 @@ export function useWhiteboard({
       try {
         console.log("[Whiteboard] remote clear");
         strokesRef.current = [];
-        // Clear means clear: the page goes with the working on it.
+        // Clear means clear: the page goes with the working on it, and the
+        // board takes ink again.
         setDocumentState(null);
+        setShowingContent(false);
         applyDocument(null);
         applyImage(null);
         redraw();
@@ -566,6 +583,7 @@ export function useWhiteboard({
         });
         strokesRef.current = Array.isArray(strokes) ? [...strokes] : [];
         setDocumentState(doc || null);
+        setShowingContent(doc || image);
         applyView(payload.view);
         if (doc) applyDocument(doc);
         else applyImage(image);
@@ -604,7 +622,7 @@ export function useWhiteboard({
       socket.off("whiteboard-page", onPage);
       socket.off("whiteboard-view", onView);
     };
-  }, [socket, redraw, applyImage, applyDocument, applyView]);
+  }, [socket, redraw, applyImage, applyDocument, applyView, setShowingContent]);
 
   /**
    * Where on the PAGE a pointer is, not where on the screen.
@@ -631,7 +649,7 @@ export function useWhiteboard({
 
   const onDown = (e) => {
     try {
-      if (!allowed) return;
+      if (!allowed || showingRef.current) return;
       e.preventDefault?.();
       // Eraser paints the board's own white — no protocol change, erases for everyone.
       const erasing = tool === "eraser";
@@ -647,7 +665,7 @@ export function useWhiteboard({
 
   const onMove = (e) => {
     try {
-      if (!allowed || !drawing.current) return;
+      if (!allowed || showingRef.current || !drawing.current) return;
       e.preventDefault?.();
       const p = pos(e);
       const pts = drawing.current.points;
@@ -667,7 +685,7 @@ export function useWhiteboard({
 
   const onUp = async () => {
     try {
-      if (!allowed || !drawing.current) return;
+      if (!allowed || showingRef.current || !drawing.current) return;
       const stroke = drawing.current;
       drawing.current = false;
       const { w, h } = cssSizeRef.current;
@@ -705,6 +723,13 @@ export function useWhiteboard({
     tool,
     setTool,
     allowed,
+    /**
+     * Whether the pen is available. Separate from `allowed`, which still lets
+     * the teacher zoom, turn pages, paste, and clear -- clearing is how a
+     * board that is showing something becomes a board to write on again.
+     */
+    canInk: allowed && !showing,
+    showing,
     fitCanvas,
     // Dropping a file onto the board goes through the same path as a paste.
     sendImage,

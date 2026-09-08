@@ -197,6 +197,13 @@ teacher can add or switch, and switching moves the whole class: the strokes
 travel with the switch, so a tab change, a late join and a reconnect all end in
 the same picture. The recording follows whichever board the class is on.
 
+**A page is shown, not written on.** Putting a picture or a document on a board
+clears whatever was drawn there and takes the pen away: strokes across a diagram
+sit in positions that mean something about the diagram, and the next page turn
+makes nonsense of them. Zoom, page turns and Clear stay -- **Clear** is the way
+back to a board that can be written on. The server refuses strokes for a board
+that is showing a page, so this is a rule rather than a hidden button.
+
 **Zoom into a page.** The `−  100%  +` controls on the board tools, Ctrl and the
 scroll wheel to zoom where the pointer is, or Ctrl with `+` `-` `0`; Shift and
 drag moves the page once zoomed. All of these zoom **the board only** -- the
@@ -228,7 +235,7 @@ tools, or paste or drop the file. The file is stored once and **every browser
 renders it for itself** with pdf.js, a page at a time, with the teacher's page
 synchronised to the class -- so a page stays sharp at whatever size a student's
 screen is, a forty-page document costs one download rather than forty, and
-turning a page puts one number on the wire. Draw on it like anything else.
+turning a page puts one number on the wire.
 
 Word documents are converted to PDF by LibreOffice on the server. Without
 `soffice` installed the teacher is told to save it as a PDF, rather than left

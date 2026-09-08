@@ -33,7 +33,12 @@ export default function Whiteboard({ board, onPlayVideo, onYouTube }) {
       : []),
     ...(onYouTube ? [{ key: "yt", label: "YouTube…", onSelect: onYouTube }] : []),
     { key: "sep2", separator: true },
-    { key: "clear", label: "Clear the board", danger: true, onSelect: board.clear },
+    {
+      key: "clear",
+      label: board.showing ? "Remove the page" : "Clear the board",
+      danger: true,
+      onSelect: board.clear,
+    },
   ];
 
   /**
@@ -103,7 +108,9 @@ export default function Whiteboard({ board, onPlayVideo, onYouTube }) {
         onTouchMove={board.onMove}
         onTouchEnd={board.onUp}
         style={{
-          cursor: board.allowed ? (erasing ? "cell" : "crosshair") : "default",
+          // A board showing a page is not a board to write on, and the cursor
+          // says so before anybody tries.
+          cursor: board.canInk ? (erasing ? "cell" : "crosshair") : "default",
           width: "100%",
           height: "100%",
           display: "block",
@@ -113,43 +120,51 @@ export default function Whiteboard({ board, onPlayVideo, onYouTube }) {
 
       {board.allowed ? (
         <div className="board-tools" role="toolbar" aria-label="Whiteboard tools">
-          <button
-            type="button"
-            className={`board-tool ${!erasing ? "active" : ""}`}
-            onClick={() => board.setTool("pen")}
-            title="Pen"
-            aria-pressed={!erasing}
-          >
-            <IconPen size={18} />
-          </button>
-          <button
-            type="button"
-            className={`board-tool ${erasing ? "active" : ""}`}
-            onClick={() => board.setTool("eraser")}
-            title="Eraser"
-            aria-pressed={erasing}
-          >
-            <IconEraser size={18} />
-          </button>
+          {/* Drawing tools only while there is something to draw on. A board
+              showing a picture or a document is showing it; Clear is the way
+              back to a board that can be written on. */}
+          {board.canInk ? (
+            <>
+              <button
+                type="button"
+                className={`board-tool ${!erasing ? "active" : ""}`}
+                onClick={() => board.setTool("pen")}
+                title="Pen"
+                aria-pressed={!erasing}
+              >
+                <IconPen size={18} />
+              </button>
+              <button
+                type="button"
+                className={`board-tool ${erasing ? "active" : ""}`}
+                onClick={() => board.setTool("eraser")}
+                title="Eraser"
+                aria-pressed={erasing}
+              >
+                <IconEraser size={18} />
+              </button>
 
-          <span className="board-sep" />
+              <span className="board-sep" />
+            </>
+          ) : null}
 
-          {COLORS.map((c) => (
-            <button
-              key={c}
-              type="button"
-              className={`board-swatch ${!erasing && board.color === c ? "active" : ""}`}
-              style={{ background: c }}
-              onClick={() => {
-                board.setColor(c);
-                board.setTool("pen");
-              }}
-              title={`Pen colour ${c}`}
-              aria-label={`Pen colour ${c}`}
-            />
-          ))}
-
-          <span className="board-sep" />
+          {board.canInk
+            ? COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`board-swatch ${!erasing && board.color === c ? "active" : ""}`}
+                  style={{ background: c }}
+                  onClick={() => {
+                    board.setColor(c);
+                    board.setTool("pen");
+                  }}
+                  title={`Pen colour ${c}`}
+                  aria-label={`Pen colour ${c}`}
+                />
+              ))
+            : null}
+          {board.canInk ? <span className="board-sep" /> : null}
 
           <span className="board-sep" />
 
@@ -209,7 +224,7 @@ export default function Whiteboard({ board, onPlayVideo, onYouTube }) {
             type="button"
             className="board-tool danger"
             onClick={board.clear}
-            title="Clear whiteboard"
+            title={board.showing ? "Remove it and write on the board" : "Clear whiteboard"}
           >
             <IconTrash size={18} />
           </button>
