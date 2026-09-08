@@ -437,6 +437,70 @@ export function useWhiteboard({
   }, [fitCanvas]);
 
   /**
+   * Ctrl and the wheel zooms the board, not the browser.
+   *
+   * This has to be a native listener registered with `passive: false`. React
+   * attaches its own wheel handling to the document as PASSIVE, which means a
+   * preventDefault() inside an onWheel prop is ignored -- so the gesture fell
+   * through to Chrome and zoomed the whole window instead of the page on the
+   * board. There is no way to ask React for a non-passive wheel listener, so
+   * the canvas gets one of its own.
+   *
+   * Only with a modifier held. A bare wheel over a board should scroll the
+   * page like anything else.
+   */
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !allowed) return undefined;
+
+    const onWheel = (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, {
+        x: (e.clientX - rect.left) / (rect.width || 1),
+        y: (e.clientY - rect.top) / (rect.height || 1),
+      });
+    };
+
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", onWheel);
+  }, [allowed, zoomAt]);
+
+  /**
+   * Ctrl with + - or 0 zooms the board too, for the same reason.
+   *
+   * Otherwise those keys zoom Chrome, which rescales the entire meeting -- the
+   * toolbar, the roster, the video tiles -- to magnify a paragraph. Only for
+   * whoever can drive the board: a student's browser zoom is their own
+   * business, and somebody who needs a larger interface still has Chrome's
+   * menu for it.
+   */
+  useEffect(() => {
+    if (!allowed) return undefined;
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+      // An input has the keyboard: a teacher typing a poll question means the
+      // characters, not the board.
+      const tag = document.activeElement?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable) return;
+
+      if (e.key === "+" || e.key === "=") {
+        e.preventDefault();
+        zoomAt(1.4);
+      } else if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        zoomAt(1 / 1.4);
+      } else if (e.key === "0") {
+        e.preventDefault();
+        setView({ scale: 1, tx: 0, ty: 0 });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [allowed, zoomAt, setView]);
+
+  /**
    * Paste is a window-level event because it has no target of its own: a
    * canvas cannot take focus, so Ctrl+V would otherwise land on the document
    * and be ignored. Anything that is not an image is left alone -- pasting

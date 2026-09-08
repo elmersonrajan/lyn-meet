@@ -197,9 +197,11 @@ teacher can add or switch, and switching moves the whole class: the strokes
 travel with the switch, so a tab change, a late join and a reconnect all end in
 the same picture. The recording follows whichever board the class is on.
 
-**Zoom into a page.** The `−  100%  +` controls on the board tools, or Ctrl and
-the scroll wheel to zoom where the pointer is; Shift and drag moves the page
-once zoomed. **The whole class zooms with the teacher** -- magnifying a
+**Zoom into a page.** The `−  100%  +` controls on the board tools, Ctrl and the
+scroll wheel to zoom where the pointer is, or Ctrl with `+` `-` `0`; Shift and
+drag moves the page once zoomed. All of these zoom **the board only** -- the
+toolbar, roster and video tiles stay where they are, which is not what Chrome's
+own zoom does with them. **The whole class zooms with the teacher** -- magnifying a
 paragraph is pointing at it, and forty people still seeing the whole page have
 not been shown anything. The zoom belongs to the board, so it travels with a
 tab switch and reaches a late joiner. Strokes are drawn through the same

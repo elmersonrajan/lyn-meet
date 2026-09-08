@@ -68,18 +68,6 @@ export default function Whiteboard({ board, onPlayVideo, onYouTube }) {
     >
       <canvas
         ref={board.canvasRef}
-        onWheel={(e) => {
-          // Only with a modifier: a bare wheel over a board should scroll the
-          // page like anything else, and a teacher who meant to zoom will say
-          // so with Ctrl.
-          if (!board.allowed || !(e.ctrlKey || e.metaKey)) return;
-          e.preventDefault();
-          const r = e.currentTarget.getBoundingClientRect();
-          board.zoomAt?.(e.deltaY < 0 ? 1.15 : 1 / 1.15, {
-            x: (e.clientX - r.left) / (r.width || 1),
-            y: (e.clientY - r.top) / (r.height || 1),
-          });
-        }}
         onMouseDown={(e) => {
           /**
            * Shift turns a drag into moving the page rather than drawing on it.
