@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { emitAck } from "../services/socket";
-import { imageFrom, toBoardPng } from "../services/boardImage";
+import { imageFrom, toBoardPng, readClipboardImage } from "../services/boardImage";
 import { documentFrom, openDocument, renderPage } from "../services/boardDocument";
 
 /** Map stroke point onto CSS pixel space (nx/ny preferred). */
@@ -215,6 +215,29 @@ export function useWhiteboard({
     },
     [allowed, onError],
   );
+
+  /**
+   * Paste, from a menu rather than a keystroke.
+   *
+   * The paste EVENT only fires for Ctrl+V, so a menu item has to ask the
+   * clipboard directly -- which needs permission. Chrome asks once and
+   * remembers; a refusal is not a fault, so it is answered with the keystroke
+   * that needs no permission at all.
+   */
+  const pasteFromClipboard = useCallback(async () => {
+    if (!allowed) return;
+    try {
+      const blob = await readClipboardImage();
+      if (!blob) {
+        onError?.("There is no picture on the clipboard. Copy one first.");
+        return;
+      }
+      await sendImage(blob);
+    } catch (err) {
+      console.warn("[Whiteboard] clipboard read refused", err.name || err.message);
+      onError?.("This browser will not read the clipboard from a menu — press Ctrl+V instead");
+    }
+  }, [allowed, sendImage, onError]);
 
   /**
    * Sends a document to the class: a PDF, or a Word file the server will
@@ -525,6 +548,7 @@ export function useWhiteboard({
     // Dropping a file onto the board goes through the same path as a paste.
     sendImage,
     sendDocument,
+    pasteFromClipboard,
     setPage,
     // What is on the board, for the page controls: null unless a document is
     // open on it.

@@ -49,6 +49,26 @@ export function imageFrom(dataTransfer) {
 }
 
 /**
+ * Reads an image out of the system clipboard.
+ *
+ * This is what a right-click "Paste" has to use: the clipboard event only
+ * fires for Ctrl+V, and a menu item is not that. It needs permission, which
+ * Chrome asks for once and remembers -- and refusing is not a fault, so the
+ * caller is told to use Ctrl+V instead rather than shown an error.
+ *
+ * @returns {Promise<Blob|null>}
+ */
+export async function readClipboardImage() {
+  if (!navigator.clipboard?.read) return null;
+  const items = await navigator.clipboard.read();
+  for (const item of items) {
+    const type = item.types.find((t) => t.startsWith("image/"));
+    if (type) return item.getType(type);
+  }
+  return null;
+}
+
+/**
  * Scales an image to the shape of a board and encodes it as a PNG.
  *
  * Fitted rather than filled: a page pasted from a document is the wrong shape
