@@ -17,6 +17,7 @@ const boardImages = require("../whiteboard/boardImages");
 const documents = require("../whiteboard/documents");
 const {
   APPRECIATIONS,
+  clampView,
   buildMedia,
   mediaPublic,
   boardsPublic,
@@ -180,6 +181,7 @@ function joinAck(room, peer, extra = {}) {
     activeBoardId: room.activeBoardId,
     boardImage: room.boardContent().image,
     boardDocument: room.boardContent().document,
+    boardView: room.boardContent().view,
     // Whether this server can turn a Word file into something a browser can
     // show, so the teacher is told before they try rather than after.
     canConvertWord: documents.canConvertWord(),
@@ -556,6 +558,41 @@ function attachSocketHandlers(io) {
       }
     });
 
+    /**
+     * Muting one student rather than all of them.
+     *
+     * Mute All is the blunt instrument for a noisy room; this is for the one
+     * microphone in a builder's yard. Only muting: staff cannot switch a
+     * student's microphone back ON, because deciding for somebody that their
+     * room is now being listened to is not a decision a teacher gets to make.
+     * The student unmutes themselves.
+     */
+    socket.on("mute-participant", async ({ peerId }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        requireStaff(peer);
+        const target = room.peers.get(peerId);
+        if (!target) throw new Error("Participant not found");
+        if (target.id === peer.id) throw new Error("Use the mic button to mute yourself");
+        if (isStaff(target)) throw new Error("Staff mute themselves");
+
+        await room.pauseProducer(target, "audio");
+        log.action("mute-participant", { roomId: room.id, by: peer.name, who: target.name });
+        // To that student's socket alone: the whole room does not need to be
+        // told to mute because one person was.
+        io.to(target.socketId).emit("force-mute", {
+          reason: `${peer.name} muted your microphone`,
+        });
+        io.to(room.id).emit("participants", room.participants());
+        io.to(room.id).emit("media-state", { peerId: target.id, source: "audio", paused: true });
+        ack(callback, { ok: true });
+      } catch (err) {
+        log.error("mute-participant failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
     socket.on("remove-participant", async ({ peerId }, callback) => {
       try {
         const room = getRoom(socket.data.roomId);
@@ -782,6 +819,9 @@ function attachSocketHandlers(io) {
         board.image = stored;
         // A board shows one thing at a time.
         board.document = null;
+        // A new page starts flat: a zoom left over from the last one would
+        // open this one halfway into a corner.
+        board.view = { scale: 1, tx: 0, ty: 0 };
         log.action("whiteboard-image", { roomId: room.id, boardId: board.id, id: stored.id });
 
         io.to(room.id).emit("whiteboard-switched", {
@@ -791,6 +831,33 @@ function attachSocketHandlers(io) {
         ack(callback, { ok: true, url: stored.url });
       } catch (err) {
         log.error("whiteboard-image failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    /**
+     * How far into the page the class is looking.
+     *
+     * Zoom belongs to the board rather than to a browser: a teacher who
+     * magnifies a paragraph is pointing at it, and forty people still seeing
+     * the whole page have not been shown anything. It travels with a board
+     * switch and reaches a late joiner for the same reason.
+     *
+     * The numbers are normalised -- a scale and an offset in units of the
+     * board itself -- so they mean the same thing on a phone and on a
+     * projector.
+     */
+    socket.on("whiteboard-view", ({ scale, tx, ty }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        requireTeacher(peer);
+        const board = room.activeBoard();
+        board.view = clampView({ scale, tx, ty });
+        io.to(room.id).emit("whiteboard-view", { boardId: board.id, view: board.view });
+        ack(callback, { ok: true, view: board.view });
+      } catch (err) {
+        log.error("whiteboard-view failed", err);
         ack(callback, { ok: false, error: err.message });
       }
     });
@@ -818,6 +885,9 @@ function attachSocketHandlers(io) {
         board.document = { ...stored, page: 1 };
         // A board shows one thing at a time.
         board.image = null;
+        // A new page starts flat: a zoom left over from the last one would
+        // open this one halfway into a corner.
+        board.view = { scale: 1, tx: 0, ty: 0 };
         log.action("whiteboard-document", { roomId: room.id, boardId: board.id, id: stored.id });
 
         io.to(room.id).emit("whiteboard-switched", {

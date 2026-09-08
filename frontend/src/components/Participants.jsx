@@ -83,6 +83,7 @@ export default function Participants({
   selfId,
   speaking = [],
   onRemove,
+  onMute,
   onLowerHand,
 }) {
   const speakingSet = new Set(speaking);
@@ -184,6 +185,28 @@ export default function Participants({
                   someone speaking is lifted above the queue. */}
               <span className="hand-order">{handOrder.get(p.id)}</span>
               <IconHand size={15} />
+            </button>
+          ) : null}
+
+          {/*
+            One microphone, not the room's.
+
+            Muting only: staff cannot switch a student's microphone back on,
+            because deciding for somebody that their room is being listened to
+            again is not a decision a teacher gets to make. Disabled rather
+            than hidden once they are muted, so the control stays where it was
+            and says why it does nothing.
+          */}
+          {canRemove && p.id !== selfId && p.role === "student" ? (
+            <button
+              type="button"
+              className="mute-btn"
+              title={p.audioMuted ? `${p.name} is already muted` : `Mute ${p.name}`}
+              aria-label={`Mute ${p.name}`}
+              disabled={p.audioMuted}
+              onClick={() => onMute?.(p.id)}
+            >
+              <IconMicOff size={14} />
             </button>
           ) : null}
 

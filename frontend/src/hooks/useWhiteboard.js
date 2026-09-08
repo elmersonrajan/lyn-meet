@@ -51,6 +51,7 @@ export function useWhiteboard({
   initial = [],
   initialImage = null,
   initialDocument = null,
+  initialView = null,
   onError,
 }) {
   // Back-compat: older callers passed isTeacher
@@ -77,6 +78,25 @@ export function useWhiteboard({
    */
   const pdfRef = useRef({ url: null, doc: null, pages: 0 });
   const [documentState, setDocumentState] = useState(initialDocument || null);
+  /**
+   * How far into the page this board is looking: a scale, and an offset in
+   * units of the board itself.
+   *
+   * Held in a ref as well as in state because every redraw and every pointer
+   * position needs it, and neither can wait for a render.
+   */
+  const viewRef = useRef(initialView || { scale: 1, tx: 0, ty: 0 });
+  const [view, setViewState] = useState(viewRef.current);
+
+  const applyView = useCallback((next) => {
+    const scale = Math.min(6, Math.max(1, Number(next?.scale) || 1));
+    // The only place there is to pan is the part of the page that zooming in
+    // pushed off the edge; at a scale of 1 there is nowhere to go.
+    const room = (1 - 1 / scale) / 2;
+    const clamp = (value) => Math.min(room, Math.max(-room, Number(value) || 0));
+    viewRef.current = { scale, tx: clamp(next?.tx), ty: clamp(next?.ty) };
+    setViewState(viewRef.current);
+  }, []);
 
   const redraw = useCallback(() => {
     try {
@@ -93,6 +113,20 @@ export function useWhiteboard({
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      /**
+       * The zoom, applied to the page AND the working on it.
+       *
+       * Magnifying the picture alone would leave every annotation floating
+       * over the wrong part of it. Both are drawn through the same transform,
+       * so a circle round a word stays round that word at any zoom.
+       */
+      const { scale, tx, ty } = viewRef.current;
+      if (scale !== 1 || tx || ty) {
+        ctx.translate(cssW / 2, cssH / 2);
+        ctx.scale(scale, scale);
+        ctx.translate(-cssW / 2 - tx * cssW, -cssH / 2 - ty * cssH);
+      }
 
       // Underneath everything: the strokes are the working, the picture is the
       // page. It arrives already fitted to the board's proportions, so it is
@@ -214,6 +248,52 @@ export function useWhiteboard({
       }
     },
     [allowed, onError],
+  );
+
+  /**
+   * Moves the class's view of the page.
+   *
+   * Sent to the server rather than applied locally and announced: the server
+   * clamps it and owns it, so a late joiner and a board switch both land on
+   * the same view instead of on whatever this browser last did.
+   */
+  const setView = useCallback(
+    async (next) => {
+      if (!allowed) return;
+      // Applied here as well, so the teacher's own zoom does not wait for a
+      // round trip to feel like it happened.
+      applyView(next);
+      redraw();
+      try {
+        await emitAck("whiteboard-view", viewRef.current);
+      } catch (err) {
+        console.error("[Whiteboard] zoom failed", err);
+      }
+    },
+    [allowed, applyView, redraw],
+  );
+
+  /** Zooms about a point on the board, given in 0..1 board units. */
+  const zoomAt = useCallback(
+    (factor, at = { x: 0.5, y: 0.5 }) => {
+      const current = viewRef.current;
+      const scale = Math.min(6, Math.max(1, current.scale * factor));
+      /**
+       * Keeping the point under the cursor still.
+       *
+       * Zooming about the middle regardless would slide whatever somebody is
+       * pointing at out from under them, which is the difference between a
+       * magnifier and a fairground ride.
+       */
+      const offset = (pointer, translate) =>
+        translate + (pointer - 0.5 - translate) * (1 - current.scale / scale);
+      setView({
+        scale,
+        tx: offset(at.x, current.tx),
+        ty: offset(at.y, current.ty),
+      });
+    },
+    [setView],
   );
 
   /**
@@ -412,7 +492,8 @@ export function useWhiteboard({
      * page everyone was just moved to, which makes a tab switch, a late join
      * and a reconnect all end in the same picture.
      */
-    const onSwitched = ({ strokes, image, document: doc }) => {
+    const onSwitched = (payload) => {
+      const { strokes, image, document: doc } = payload;
       try {
         console.log("[Whiteboard] board switched", {
           strokes: strokes?.length || 0,
@@ -421,6 +502,7 @@ export function useWhiteboard({
         });
         strokesRef.current = Array.isArray(strokes) ? [...strokes] : [];
         setDocumentState(doc || null);
+        applyView(payload.view);
         if (doc) applyDocument(doc);
         else applyImage(image);
         redraw();
@@ -431,6 +513,12 @@ export function useWhiteboard({
 
     // A page turn is a number, not a board: the document is already open in
     // every browser, and re-sending it to move one page would be absurd.
+    // The teacher moved everyone's view of the page.
+    const onView = ({ view: next }) => {
+      applyView(next);
+      redraw();
+    };
+
     const onPage = ({ page }) => {
       setDocumentState((current) => {
         if (!current) return current;
@@ -444,28 +532,37 @@ export function useWhiteboard({
     socket.on("whiteboard-clear", onClear);
     socket.on("whiteboard-switched", onSwitched);
     socket.on("whiteboard-page", onPage);
+    socket.on("whiteboard-view", onView);
     return () => {
       socket.off("whiteboard-stroke", onStroke);
       socket.off("whiteboard-clear", onClear);
       socket.off("whiteboard-switched", onSwitched);
       socket.off("whiteboard-page", onPage);
+      socket.off("whiteboard-view", onView);
     };
-  }, [socket, redraw, applyImage, applyDocument]);
+  }, [socket, redraw, applyImage, applyDocument, applyView]);
 
+  /**
+   * Where on the PAGE a pointer is, not where on the screen.
+   *
+   * The transform in redraw moves the page under the canvas, so a click has to
+   * be moved back through it. Without this, drawing while zoomed in would put
+   * the ink wherever the page happened to have been before the zoom.
+   */
   const pos = (e) => {
     const canvas = canvasRef.current;
     const r = canvas.getBoundingClientRect();
     const src = e.touches ? e.touches[0] : e;
-    const x = src.clientX - r.left;
-    const y = src.clientY - r.top;
     const w = r.width || 1;
     const h = r.height || 1;
-    return {
-      x,
-      y,
-      nx: x / w,
-      ny: y / h,
-    };
+    const screenX = src.clientX - r.left;
+    const screenY = src.clientY - r.top;
+
+    const { scale, tx, ty } = viewRef.current;
+    const x = (screenX - w / 2) / scale + w / 2 + tx * w;
+    const y = (screenY - h / 2) / scale + h / 2 + ty * h;
+
+    return { x, y, nx: x / w, ny: y / h };
   };
 
   const onDown = (e) => {
@@ -550,6 +647,10 @@ export function useWhiteboard({
     sendDocument,
     pasteFromClipboard,
     setPage,
+    view,
+    zoomAt,
+    setView,
+    resetView: () => setView({ scale: 1, tx: 0, ty: 0 }),
     // What is on the board, for the page controls: null unless a document is
     // open on it.
     document: documentState,
