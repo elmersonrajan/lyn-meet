@@ -427,6 +427,36 @@ async function main() {
       }
     });
 
+    /**
+     * Whether the platform has a link for each finished recording, and if not,
+     * why not.
+     *
+     * "YouTubeRecords is not updating" has several causes that look the same
+     * from outside. This answers it in one request instead of a hunt through
+     * the log: configuration, the columns the table actually has, and one line
+     * per recording saying published or not, with the reason.
+     */
+    app.get("/api/recordings/publish-report", requireStaff, async (req, res) => {
+      try {
+        const report = await require("./recording/publishRecording").report();
+        res.json({ ok: true, ...report });
+      } catch (err) {
+        log.error("/api/recordings/publish-report failed", err);
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
+
+    /** Retries anything rendered that has no row yet. Safe to call repeatedly. */
+    app.post("/api/recordings/publish-sweep", requireStaff, async (req, res) => {
+      try {
+        const published = await require("./recording/publishRecording").sweep();
+        res.json({ ok: true, published });
+      } catch (err) {
+        log.error("/api/recordings/publish-sweep failed", err);
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
+
     app.get("/api/recordings", requireStaff, (req, res) => {
       try {
         const fs = require("fs");
@@ -472,17 +502,20 @@ async function main() {
     attachSocketHandlers(io);
     startIdleReaper(io);
 
+    // Attendance and finished recordings reach the platform's own tables from
+    // here. Both are mirrors of something already on disk, so a database that
+    // is down delays them rather than losing them.
+    //
+    // Subscribed BEFORE anything is queued: a render resumed at boot must not
+    // be able to finish while nothing is listening for it.
+    attendanceDb.start();
+    const publishRecording = require("./recording/publishRecording");
+    publishRecording.start();
+
     // A restart used to lose any class that was still being built: the capture
     // sat on disk with nobody left who knew it needed rendering.
     const resumed = require("./recording/renderQueue").resumePending();
     if (resumed) log.warn("resumed recordings left unrendered by the last shutdown", { resumed });
-
-    // Attendance and finished recordings reach the platform's own tables from
-    // here. Both are mirrors of something already on disk, so a database that
-    // is down delays them rather than losing them.
-    attendanceDb.start();
-    const publishRecording = require("./recording/publishRecording");
-    publishRecording.start();
     // Anything that finished while this was switched off, or while the
     // database was unreachable, is published now rather than being lost.
     publishRecording

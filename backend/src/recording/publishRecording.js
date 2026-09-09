@@ -18,9 +18,23 @@
  */
 const renderQueue = require("./renderQueue");
 const { query } = require("../db/pool");
+const { stamp } = require("../attendance/attendanceDb");
 const { createLogger } = require("../utils/logger");
 
 const log = createLogger("Recordings");
+
+/** Ours, in a table the site also writes to. Same marker the attendance rows carry. */
+const UPLOADED_BY = process.env.ATTENDANCE_UPLOADED_BY || "LYN MEET";
+
+/**
+ * How often to retry rows that could not be written.
+ *
+ * The live listener fires once, and a database that was unreachable at that
+ * moment loses the link for good -- the file is on disk, rendered, with
+ * nothing on the platform pointing at it. Publishing is idempotent, so
+ * re-checking costs one query per finished recording.
+ */
+const SWEEP_MINUTES = Number(process.env.RECORDING_SWEEP_MINUTES || 15);
 
 function flag(name, fallback) {
   const raw = process.env[name];
@@ -54,6 +68,76 @@ function urlFor(file) {
 }
 
 /**
+ * The columns `YouTubeRecords` actually has, read once from the database.
+ *
+ * The site owns this table, and it has more columns than the two this app
+ * cares about. Any of them that is NOT NULL with no default has to be given a
+ * value or MySQL rejects the whole INSERT -- which is exactly how a recording
+ * ends up rendered, on disk, and invisible to the platform, with one error
+ * line in a log nobody is reading. So the statement is built from the schema
+ * rather than from an assumption about it.
+ */
+let columns = null;
+
+async function describeTable() {
+  if (columns) return columns;
+  const rows = await query("SHOW COLUMNS FROM YouTubeRecords");
+  columns = rows.map((r) => ({
+    name: r.Field,
+    type: String(r.Type || "").toLowerCase(),
+    nullable: r.Null === "YES",
+    hasDefault: r.Default !== null,
+    generated: /auto_increment|GENERATED/i.test(String(r.Extra || "")),
+  }));
+  log.info("YouTubeRecords columns", { columns: columns.map((c) => c.name).join(", ") });
+  return columns;
+}
+
+/** Something a NOT NULL column of this type will accept. */
+function filler(column, now) {
+  if (/^(datetime|timestamp)/.test(column.type)) return stamp(now);
+  if (/^date/.test(column.type)) return stamp(now).slice(0, 10);
+  if (/^time/.test(column.type)) return stamp(now).slice(11);
+  if (/int|decimal|float|double|bit/.test(column.type)) return 0;
+  return "";
+}
+
+/**
+ * The INSERT, fitted to the table in front of it.
+ *
+ * ScheduleID and VideoURL are what this app knows. A column named for who
+ * uploaded gets the same marker the attendance rows carry, so a row written
+ * here is distinguishable from one the site wrote. Everything else that MySQL
+ * would refuse to leave empty gets the emptiest value of its type -- present,
+ * so the row lands, and obviously unset, so nobody mistakes it for data.
+ */
+function insertFor(schema, scheduleId, url, now = Date.now()) {
+  const values = new Map([
+    ["ScheduleID", scheduleId],
+    ["VideoURL", url],
+  ]);
+
+  for (const column of schema) {
+    if (values.has(column.name)) continue;
+    if (column.generated) continue;
+    if (/^uploaded_?by$/i.test(column.name)) {
+      values.set(column.name, UPLOADED_BY);
+      continue;
+    }
+    if (column.nullable || column.hasDefault) continue;
+    values.set(column.name, filler(column, now));
+  }
+
+  const names = [...values.keys()];
+  return {
+    sql: `INSERT INTO YouTubeRecords (${names.map((n) => `\`${n}\``).join(", ")}) VALUES (${names
+      .map(() => "?")
+      .join(", ")})`,
+    params: [...values.values()],
+  };
+}
+
+/**
  * Writes the row, unless this exact video is already recorded against the
  * class.
  *
@@ -66,7 +150,13 @@ function urlFor(file) {
 async function publish({ meetingId, file }) {
   const scheduleId = scheduleIdOf(meetingId);
   if (scheduleId == null) {
-    log.info("not a scheduled class — recording stays on disk only", { meetingId, file });
+    // Warn, not info. A whole class being unpublishable because its room is
+    // not a ScheduleID is the sort of thing that should be visible in a log
+    // somebody is scanning for why the platform has no video.
+    log.warn("room id is not a ScheduleID — this recording cannot be filed against a class", {
+      meetingId,
+      file,
+    });
     return null;
   }
   if (!config.baseUrl) {
@@ -87,10 +177,8 @@ async function publish({ meetingId, file }) {
     return existing[0].VideoID;
   }
 
-  const result = await query("INSERT INTO YouTubeRecords (ScheduleID, VideoURL) VALUES (?, ?)", [
-    scheduleId,
-    url,
-  ]);
+  const { sql, params } = insertFor(await describeTable(), scheduleId, url);
+  const result = await query(sql, params);
   log.action("recording published to the platform", {
     scheduleId,
     videoId: result.insertId,
@@ -120,6 +208,7 @@ async function sweep() {
     .filter((job) => job.status === renderQueue.STATUS.COMPLETED && job.file);
   let published = 0;
   for (const job of jobs) {
+    if (scheduleIdOf(job.meetingId) == null) continue;
     try {
       const before = await query(
         "SELECT VideoID FROM YouTubeRecords WHERE ScheduleID = ? AND VideoURL = ? LIMIT 1",
@@ -137,6 +226,73 @@ async function sweep() {
     }
   }
   return published;
+}
+
+/**
+ * Why the platform has, or has not, got a link for each recording.
+ *
+ * "The database is not updating" has half a dozen causes that all look
+ * identical from outside -- writes switched off, no public URL configured, a
+ * room that was never a scheduled class, a render that failed, a column the
+ * INSERT does not satisfy -- and each one is a different fix. This answers the
+ * question directly instead of leaving it to be inferred from a log.
+ */
+async function report() {
+  const jobs = renderQueue.listJobs();
+  const out = {
+    enabled: config.enabled,
+    baseUrl: config.baseUrl || null,
+    database: process.env.DB_NAME || null,
+    subscribed: started,
+    reachable: null,
+    columns: null,
+    jobs: [],
+  };
+
+  if (!process.env.DB_HOST) {
+    out.reason = "DB_HOST is not set — nothing is ever written";
+    return out;
+  }
+  try {
+    out.columns = (await describeTable()).map((c) => c.name);
+    out.reachable = true;
+  } catch (err) {
+    out.reachable = false;
+    out.reason = `the database rejected SHOW COLUMNS FROM YouTubeRecords: ${err.message}`;
+    return out;
+  }
+  if (!config.enabled) out.reason = "RECORDING_DB_WRITES is off";
+  else if (!config.baseUrl) out.reason = "neither RECORDING_PUBLIC_BASE_URL nor SSO_AUDIENCE is set";
+
+  for (const job of jobs.slice(0, 50)) {
+    const scheduleId = scheduleIdOf(job.meetingId);
+    const row = { id: job.id, meetingId: job.meetingId, status: job.status, file: job.file };
+    if (job.status !== renderQueue.STATUS.COMPLETED) {
+      row.published = false;
+      row.why = job.status === renderQueue.STATUS.FAILED ? `render failed: ${job.error}` : `render is ${job.status}`;
+    } else if (scheduleId == null) {
+      row.published = false;
+      row.why = "the room id is not a ScheduleID, so there is no class to file it against";
+    } else if (!config.baseUrl) {
+      row.published = false;
+      row.why = "no public base URL is configured";
+    } else {
+      try {
+        const found = await query(
+          "SELECT VideoID FROM YouTubeRecords WHERE ScheduleID = ? AND VideoURL = ? LIMIT 1",
+          [scheduleId, urlFor(job.file)],
+        );
+        row.published = Boolean(found.length);
+        row.videoId = found[0]?.VideoID || null;
+        if (!row.published) row.why = "rendered, but no row — run the sweep or read the error below";
+      } catch (err) {
+        row.published = false;
+        row.why = `lookup failed: ${err.message}`;
+      }
+    }
+    out.jobs.push(row);
+  }
+  return out;
 }
 
 let started = false;
@@ -166,8 +322,33 @@ function start() {
     });
   });
   started = true;
-  log.info("publishing finished recordings to YouTubeRecords", { baseUrl: config.baseUrl });
+  if (!config.baseUrl) {
+    log.error(
+      "no RECORDING_PUBLIC_BASE_URL and no SSO_AUDIENCE — recordings will render but never reach YouTubeRecords",
+    );
+  }
+  /**
+   * A retry, on a timer.
+   *
+   * The listener above fires exactly once per recording. A database that was
+   * unreachable at that moment used to lose the link permanently: the file
+   * stayed on disk, rendered and fine, and the platform never learnt it
+   * existed. Publishing is idempotent, so this simply re-asks.
+   */
+  if (SWEEP_MINUTES > 0) {
+    setInterval(() => {
+      sweep()
+        .then((n) => {
+          if (n) log.warn("published recordings that had no row", { published: n });
+        })
+        .catch((err) => log.error("recording sweep failed", err.message));
+    }, SWEEP_MINUTES * 60 * 1000).unref();
+  }
+  log.info("publishing finished recordings to YouTubeRecords", {
+    baseUrl: config.baseUrl,
+    retryEveryMinutes: SWEEP_MINUTES,
+  });
   return true;
 }
 
-module.exports = { start, sweep, publish, urlFor, scheduleIdOf, config };
+module.exports = { start, sweep, report, publish, insertFor, urlFor, scheduleIdOf, config };

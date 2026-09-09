@@ -401,31 +401,21 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       if (recording) {
         await emitAck("stop-recording", {});
         setRecording(false);
-        await media.stopStageCapture();
       } else {
         /**
-         * The recording is a recording of this screen.
+         * Nothing is captured from this browser.
          *
-         * The capture is published BEFORE the server is told to start, because
-         * the recorder decides what it is recording at the moment it starts:
-         * a stage arriving a second later would be a stage the recording never
-         * knew about.
-         *
-         * A teacher who declines the browser's prompt still gets a recording
-         * -- the server falls back to assembling the picture from the board,
-         * the camera and any screen share, which is what it always did.
+         * The recording is built on the server, the way Meet and Zoom build
+         * theirs: the board is drawn there from the strokes and the page under
+         * them, the camera and the microphones arrive as the streams they
+         * already are. Pressing record used to open the browser's screen
+         * picker first, which is a thing to get wrong in front of a class.
          */
-        const captured = await media.startStageCapture();
-        if (!captured) {
-          showToast("Recording the board and camera only — the screen was not shared");
-        }
         await emitAck("start-recording", {});
       }
     } catch (err) {
       console.error("[MeetingRoom] record toggle failed", err);
       setToast(err.message);
-      // Nothing is being recorded, so nothing should still be captured.
-      await media.stopStageCapture().catch(() => {});
     } finally {
       setRecBusy(false);
     }

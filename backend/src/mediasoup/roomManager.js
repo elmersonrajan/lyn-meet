@@ -420,14 +420,15 @@ class Room {
         throw new Error("Only staff can share sound from their screen");
       }
       /**
-       * "stage" is the teacher's own tab, captured while a recording runs so
-       * the recording shows what the class was actually looking at. Nobody
-       * consumes it; it exists for the recorder.
+       * There is deliberately no "stage" here any more.
+       *
+       * A recording used to be built from a capture of the teacher's own tab,
+       * which meant every recording began by asking the teacher to share their
+       * screen. The server now draws the board itself -- the strokes, and the
+       * picture or document page underneath them, from the files it already
+       * holds -- so nothing needs to be captured from anybody's browser.
        */
-      if (peer.role === "student" && source === "stage") {
-        throw new Error("Only staff can publish the stage");
-      }
-      if (!["audio", "video", "screen", "screen-audio", "stage"].includes(source)) {
+      if (!["audio", "video", "screen", "screen-audio"].includes(source)) {
         throw new Error(`Unknown producer source "${source}"`);
       }
       log.action("produce", { peerId: peer.id, kind, source, role: peer.role });
@@ -746,6 +747,8 @@ async function closeRoom(room) {
      */
     boardImages.removeForMeeting(room.id);
     documents.removeForMeeting(room.id);
+    // The decoded pages of those files, held only to draw recordings with.
+    require("../recording/boardPage").forget(room.id);
   } catch (err) {
     log.error("closeRoom failed", err);
     throw err;
