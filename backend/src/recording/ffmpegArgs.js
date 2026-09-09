@@ -263,8 +263,21 @@ function buildComposeArgs(opts) {
     fps = FPS,
   } = opts;
 
-  const args = ["-y", "-loglevel", "warning", "-i", livePath];
-  let nextInput = 1;
+  const args = ["-y", "-loglevel", "warning"];
+  let nextInput = 0;
+
+  /**
+   * The RTP capture is optional.
+   *
+   * It holds the microphone, the camera and a shared screen -- and nothing
+   * else. A lesson taught on the board with the camera off and the mic muted
+   * produces an empty one, and refusing to compose without it threw away a
+   * class whose every board frame was on disk. The board and the mixed voices
+   * are their own inputs, so the layout is built from whatever is actually
+   * there.
+   */
+  const liveInput = livePath ? nextInput++ : null;
+  if (livePath) args.push("-i", livePath);
 
   // A plain video input, already scaled and at the right frame rate by the
   // board step, so nothing here has to reason about image sequences.
@@ -300,8 +313,8 @@ function buildComposeArgs(opts) {
     needsShortest = true;
   }
 
-  if (screenIndex != null) {
-    chains.push(`[0:v:${screenIndex}]${fit(width, height)},fps=${fps}[scr]`);
+  if (screenIndex != null && liveInput != null) {
+    chains.push(`[${liveInput}:v:${screenIndex}]${fit(width, height)},fps=${fps}[scr]`);
   } else if (screenInput != null) {
     // Transparent, not black, until the share began: black padding would hide
     // the board for everything that happened before the teacher shared.
@@ -312,14 +325,14 @@ function buildComposeArgs(opts) {
         : "";
     chains.push(`[${screenInput}:v]${fit(width, height)},format=yuva420p,${pad}fps=${fps}[scr]`);
   }
-  if (screenIndex != null || screenInput != null) {
+  if ((screenIndex != null && liveInput != null) || screenInput != null) {
     chains.push(`[${videoLabel}][scr]overlay=0:0:eof_action=pass[withscreen]`);
     videoLabel = "withscreen";
   }
 
   // The camera sits over everything, bottom right, for as long as it ran.
-  if (camIndex != null) {
-    chains.push(`[0:v:${camIndex}]${fit(PIP_W, PIP_H)},fps=${fps}[cam]`);
+  if (camIndex != null && liveInput != null) {
+    chains.push(`[${liveInput}:v:${camIndex}]${fit(PIP_W, PIP_H)},fps=${fps}[cam]`);
     chains.push(
       `[${videoLabel}][cam]overlay=W-w-${PIP_MARGIN}:H-h-${PIP_MARGIN}:eof_action=pass[withcam]`,
     );
@@ -331,9 +344,10 @@ function buildComposeArgs(opts) {
   // Prefer the mixed track: it already holds every microphone, placed in time.
   // Falling back to the raw teacher audio keeps a class usable when the mix
   // step could not run.
-  const takesAudio = audioInput != null || hasAudio;
+  const liveAudio = hasAudio && liveInput != null;
+  const takesAudio = audioInput != null || liveAudio;
   if (audioInput != null) args.push("-map", `${audioInput}:a:0`);
-  else if (hasAudio) args.push("-map", "0:a:0");
+  else if (liveAudio) args.push("-map", `${liveInput}:a:0`);
 
   args.push(
     "-c:v", "libx264",
@@ -345,7 +359,7 @@ function buildComposeArgs(opts) {
   // Already AAC from the mix step, so copying avoids a second lossy pass.
   if (audioInput != null) {
     args.push("-c:a", "copy");
-  } else if (hasAudio) {
+  } else if (liveAudio) {
     args.push("-c:a", "aac", "-b:a", "160k", "-ar", "48000");
     // Capture timestamps come from the wall clock, so a packet arriving out of
     // order carries a timestamp behind the one before it. Without this the
