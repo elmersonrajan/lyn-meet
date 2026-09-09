@@ -224,23 +224,28 @@ function cleanupIntermediates(job, extras) {
 async function renderJob(job) {
   const dropped = [];
   try {
-    if (fileSize(job.livePath) < MIN_USEFUL_BYTES) {
-      return {
-        ok: false,
-        file: null,
-        layout: null,
-        voices: [],
-        dropped,
-        error: "nothing was captured",
-      };
+    /**
+     * The RTP capture holds the microphone, the camera and a shared screen --
+     * and nothing else.
+     *
+     * An empty one used to end the render here, which threw away a class
+     * taught on the board with the camera off and the mic muted: every board
+     * frame was on disk, and the reason given was "nothing was captured".
+     * Now the board and the side voices are considered too, and the render
+     * only gives up when there is genuinely nothing to show or hear.
+     */
+    const live = fileSize(job.livePath) >= MIN_USEFUL_BYTES ? job.livePath : null;
+    if (!live) {
+      log.warn("no camera, microphone or screen reached the recorder", { id: job.id });
+      dropped.push("camera, microphone and screen share");
     }
 
     // Trust the file over the recorder's bookkeeping: a producer that sent no
     // RTP leaves no stream, and a layout referencing a missing stream fails.
-    let camIndex = job.camIndex;
-    let screenIndex = job.screenIndex;
-    let hasAudio = job.hasAudio;
-    const probe = probeMedia(job.livePath);
+    let camIndex = live ? job.camIndex : null;
+    let screenIndex = live ? job.screenIndex : null;
+    let hasAudio = live ? job.hasAudio : false;
+    const probe = live ? probeMedia(job.livePath) : null;
     if (probe) {
       log.info("probed capture", { id: job.id, ...probe });
       if (camIndex != null && camIndex >= probe.videoCount) camIndex = null;
@@ -259,7 +264,7 @@ async function renderJob(job) {
       dropped.push(key.startsWith("doc:") ? "a document page" : "a pasted picture");
     }
 
-    const audio = await makeMixedAudio(job, hasAudio);
+    const audio = await makeMixedAudio({ ...job, livePath: live }, hasAudio);
     if (audio.degraded) dropped.push("student and coordinator audio");
 
     const screenSides = (job.sides || []).filter((s) => s.kind === "video");
@@ -282,6 +287,19 @@ async function renderJob(job) {
     const sideScreen = sideScreenRaw
       ? { path: sideScreenRaw.path, offsetMs: sideScreenRaw.offsetMs }
       : null;
+
+    // No picture and no sound: there is no recording to make, and saying so
+    // is more use than reporting that every layout failed.
+    if (!live && !boardVideo && !audio.path && !sideScreen) {
+      return {
+        ok: false,
+        file: null,
+        layout: null,
+        voices: [],
+        dropped,
+        error: "nothing was captured",
+      };
+    }
 
     const resolved = resolveOutputPath(RECORDINGS_DIR, job.meetingId, job.startedAt || Date.now());
     const outputPath = resolved.fullPath;
@@ -315,6 +333,7 @@ async function renderJob(job) {
         attempt.screenIndex == null &&
         attempt.sideScreen == null;
       if (nothingToShow && !hasAudio && !audio.path) continue;
+      if (nothingToShow && !live) continue;
 
       // Dropping an element that was never captured produces the same command
       // twice; running it again would only fail again.
@@ -329,7 +348,7 @@ async function renderJob(job) {
 
       const res = await runFfmpeg(
         buildComposeArgs({
-          livePath: job.livePath,
+          livePath: live,
           boardVideo: attempt.boardVideo,
           outputPath,
           camIndex: attempt.camIndex,
