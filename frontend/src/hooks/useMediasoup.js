@@ -56,19 +56,6 @@ function camEncodings(profile) {
   };
 }
 
-/**
- * The stage is a page being read as often as it is a video being watched, so
- * it is given the room to stay legible -- and a low frame rate, because a
- * whiteboard is still most of the time.
- */
-function stageEncodings(profile) {
-  const screen = profile?.screen || DEFAULT_PROFILE.screen;
-  return {
-    encodings: [{ maxBitrate: screen.maxBitrate, maxFramerate: 15 }],
-    codecOptions: { videoGoogleStartBitrate: Math.round(screen.maxBitrate / 1000) },
-  };
-}
-
 function screenEncodings(profile) {
   const screen = profile?.screen || DEFAULT_PROFILE.screen;
   return {
@@ -152,8 +139,6 @@ export function useMediasoup({ socket, role, peerId, enabled, profile }) {
   const localStreamRef = useRef(null);
   /** The getDisplayMedia capture, for the same reason. */
   const localScreenRef = useRef(null);
-  /** The tab capture that is recorded as the stage, while recording runs. */
-  const stageStreamRef = useRef(null);
 
   const teacherStreamRef = useRef(new MediaStream());
   const screenStreamRef = useRef(new MediaStream());
@@ -268,16 +253,6 @@ export function useMediasoup({ socket, role, peerId, enabled, profile }) {
         if (!producer) return;
         if (producer.peerId && producer.peerId === peerIdRef.current) {
           console.log("[Mediasoup] skip own producer", producer);
-          return;
-        }
-        /**
-         * The stage is the teacher's own tab, published for the recorder
-         * alone. Consuming it would show every student a mirror of the
-         * teacher's interface and cost them a second video stream to see
-         * what they are already looking at.
-         */
-        if (producer.source === "stage") {
-          console.log("[Mediasoup] skip the stage capture — it is for the recording");
           return;
         }
         if (producer.source === "video" || producer.source === "screen") {
@@ -620,85 +595,6 @@ export function useMediasoup({ socket, role, peerId, enabled, profile }) {
   }, [camOn, localStream, role, applyLocalStream]);
 
   /**
-   * Captures this browser tab, and publishes it as the class stage.
-   *
-   * This is what makes a recording look like the lesson. The server used to
-   * rebuild the picture from parts it understood -- strokes re-drawn from the
-   * stroke list, the camera, a screen share -- which meant anything it could
-   * not rebuild was simply missing: a pasted diagram, a PDF page, a document,
-   * every piece of the interface around them.
-   *
-   * The teacher's own tab already shows all of it, correctly, because that is
-   * the thing everyone is looking at. So it is captured and sent as one video,
-   * and the recorder lays that down as the picture instead of assembling a
-   * guess at it.
-   *
-   * Only while recording. It costs an uplink stream, and there is no reason to
-   * pay for it when nothing is being kept.
-   */
-  const startStageCapture = useCallback(async () => {
-    if (role !== "teacher" && role !== "coordinator") return false;
-    if (producersRef.current.stage) return true;
-    try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { displaySurface: "browser", frameRate: { max: 15 } },
-        audio: false,
-        // Chrome offers this tab first, so the teacher confirms rather than
-        // hunting through a list of windows for the one they are looking at.
-        preferCurrentTab: true,
-      });
-      const track = stream.getVideoTracks()[0];
-      if (!track) throw new Error("nothing was captured");
-      // Text and diagrams, not motion: sharpness matters more than smoothness
-      // for a page somebody is reading.
-      try {
-        track.contentHint = "detail";
-      } catch (err) {
-        console.warn("[Mediasoup] contentHint not supported", err.message);
-      }
-      const producer = await sendTransportRef.current.produce({
-        track,
-        ...stageEncodings(profileRef.current),
-        appData: { source: "stage" },
-      });
-      producersRef.current.stage = producer;
-      stageStreamRef.current = stream;
-      // Stopping the capture from the browser's own bar ends the stage, and
-      // the recording carries on with whatever else it has.
-      track.onended = () => {
-        stopStageCapture().catch((err) => console.error("[Mediasoup] stage end failed", err));
-      };
-      console.log("[Mediasoup] stage capture started");
-      return true;
-    } catch (err) {
-      // A teacher who declines has not broken anything: the recording falls
-      // back to the picture the server assembles itself.
-      console.warn("[Mediasoup] stage capture refused", err.name || err.message);
-      return false;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role]);
-
-  const stopStageCapture = useCallback(async () => {
-    const producer = producersRef.current.stage;
-    if (!producer) return;
-    try {
-      await emitAck("close-producer", { source: "stage" });
-    } catch (err) {
-      console.error("[Mediasoup] closing the stage failed", err);
-    }
-    try {
-      producer.close();
-    } catch (err) {
-      console.error("[Mediasoup] stage producer close failed", err);
-    }
-    producersRef.current.stage = null;
-    releaseStream(stageStreamRef.current);
-    stageStreamRef.current = null;
-    console.log("[Mediasoup] stage capture stopped");
-  }, [releaseStream]);
-
-  /**
    * Ends both halves of a screen share.
    *
    * The picture and the sound are two producers, and stopping the share from
@@ -836,11 +732,9 @@ export function useMediasoup({ socket, role, peerId, enabled, profile }) {
       console.log("[Mediasoup] cleanup");
       releaseStream(localStreamRef.current);
       releaseStream(localScreenRef.current);
-      releaseStream(stageStreamRef.current);
       releaseStream(screenStreamRef.current);
       localStreamRef.current = null;
       localScreenRef.current = null;
-      stageStreamRef.current = null;
       setLocalStream(null);
       Object.values(producersRef.current).forEach((p) => {
         try {
@@ -865,8 +759,6 @@ export function useMediasoup({ socket, role, peerId, enabled, profile }) {
     startScreen,
     stopScreen,
     cleanup,
-    startStageCapture,
-    stopStageCapture,
     localStream,
     teacherStream,
     screenStream,

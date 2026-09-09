@@ -7,9 +7,10 @@
  * What arrives is a PNG, already scaled by the browser to the shape of a board.
  * It used to be raw pixels -- about 2.7 MB of them -- because the server had to
  * composite the picture into the class recording and its frame renderer has no
- * image decoder. Now that a recording is a capture of the teacher's own screen,
- * that requirement is gone, and with it the reason to put three megabytes on
- * the wire for a diagram that compresses to two hundred kilobytes.
+ * image decoder. It still does not: the recorder hands this file to ffmpeg,
+ * which is already required for recording at all (see recording/boardPage.js).
+ * So a diagram costs the two hundred kilobytes it compresses to rather than
+ * three megabytes on the wire.
  *
  * These are the pages of one lesson. They are swept while the server runs, not
  * only when it restarts, and a meeting takes its pictures with it when it ends.

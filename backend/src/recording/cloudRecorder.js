@@ -2,7 +2,8 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 const { createLogger } = require("../utils/logger");
-const { writeBoardFrame } = require("./whiteboardFrame");
+const { writeBoardFrame, FLAT_VIEW } = require("./whiteboardFrame");
+const boardPage = require("./boardPage");
 const { buildSdp, buildIngestArgs } = require("./ffmpegArgs");
 const { RECORDINGS_DIR, ensureDir, fileSize } = require("./paths");
 const renderQueue = require("./renderQueue");
@@ -104,8 +105,12 @@ class CloudRecorder {
     // finished file: the board and every side capture are placed relative to it.
     this.mediaStartedAt = null;
 
+    // Pages the board showed that this server could not draw -- a PDF with no
+    // rasteriser installed, a picture that would not decode. Carried into the
+    // job so a recording missing them says so instead of looking complete.
+    this.droppedPages = new Set();
+
     // Stream order inside the ingest file, needed by the render layout.
-    this.stageIndex = null;
     this.camIndex = null;
     this.screenIndex = null;
     this.hasAudio = false;
@@ -130,28 +135,13 @@ class CloudRecorder {
         throw new Error("Nothing to record — the teacher has no camera, mic or screen running");
       }
 
-      /**
-       * The stage: the teacher's own tab, captured by their browser.
-       *
-       * When it is there it becomes the picture, and everything the server
-       * would otherwise have rebuilt -- the board re-drawn from strokes, a
-       * screen share, the camera inset -- is already inside it, correctly,
-       * including the things the server cannot rebuild at all: a pasted
-       * diagram, a PDF page, a document. A teacher who declines the capture
-       * gets the assembled picture instead, which is what this always did.
-       */
-      const stagePeer = this.room.getStaff().find((p) => this.room.findProducer(p.id, "stage"));
-      const stageProducer = stagePeer ? this.room.findProducer(stagePeer.id, "stage") : null;
-
       const audio = audioProducer ? await this._attach(audioProducer, "audio") : null;
-      const stage = stageProducer ? await this._attach(stageProducer, "stage") : null;
       const cam = camProducer ? await this._attach(camProducer, "video") : null;
       const screen = screenProducer ? await this._attach(screenProducer, "screen") : null;
 
       this.hasAudio = Boolean(audio);
       // Video stream indexes within the output, in SDP order.
       let v = 0;
-      this.stageIndex = stage ? v++ : null;
       this.camIndex = cam ? v++ : null;
       this.screenIndex = screen ? v++ : null;
 
@@ -161,7 +151,7 @@ class CloudRecorder {
       this.livePath = path.join(RECORDINGS_DIR, `${this.id}_live.mkv`);
       this.logPath = path.join(RECORDINGS_DIR, `${this.id}_ffmpeg.log`);
 
-      fs.writeFileSync(this.sdpPath, buildSdp({ audio, stage, cam, screen }), "utf8");
+      fs.writeFileSync(this.sdpPath, buildSdp({ audio, cam, screen }), "utf8");
 
       const args = buildIngestArgs({
         sdpPath: this.sdpPath,
@@ -633,16 +623,31 @@ class CloudRecorder {
    * Strokes are appended whole and a clear empties the list, so the count plus
    * the last stroke's timestamp changes on every edit and on nothing else.
    */
-  _boardSignature() {
+  _boardSignature(pageKey, ready, view) {
     const strokes = this.room.whiteboard || [];
     // The board id is part of it because a class can now be moved between
     // boards mid-lesson: two pages that happen to hold the same number of
     // strokes are still two different pictures, and the recording has to show
     // whichever one the class was actually looking at.
-    // The pasted picture is part of the signature too: a diagram arriving on
-    // an empty board changes nothing about the strokes, and without this the
-    // recording would reuse the blank frame it wrote a moment earlier.
-    return `${this.room.activeBoardId}:${strokes.length}:${strokes[strokes.length - 1]?.at || 0}`;
+    //
+    // So are the page and the zoom. A diagram arriving on an empty board
+    // changes nothing about the strokes, and neither does a teacher magnifying
+    // a paragraph -- without both here the recording would keep reusing the
+    // frame it wrote a moment earlier and neither would ever appear.
+    //
+    // `ready` flips once a page finishes decoding, which is what makes the
+    // frame after it redraw with the page in place.
+    const v = view || FLAT_VIEW;
+    return [
+      this.room.activeBoardId,
+      strokes.length,
+      strokes[strokes.length - 1]?.at || 0,
+      pageKey || "-",
+      ready ? "1" : "0",
+      v.scale,
+      v.tx,
+      v.ty,
+    ].join(":");
   }
 
   /**
@@ -655,21 +660,31 @@ class CloudRecorder {
    */
   _writeBoardSnapshot() {
     try {
-      // The teacher's own screen is being captured: the board is already in
-      // that picture, correctly, along with everything the server cannot draw.
-      if (this.stageIndex != null) return;
       const at = Date.now();
-      const signature = this._boardSignature();
+      const board = this.room.activeBoard ? this.room.activeBoard() : null;
+      const view = board?.view || FLAT_VIEW;
+      /**
+       * The page under the strokes, decoded from the file this server already
+       * holds -- the same picture or PDF every browser in the room fetched.
+       *
+       * Never waited on: a document opened this second is drawn on the next
+       * frame or the one after, and a class does not pause for a rasteriser.
+       */
+      const page = boardPage.pixelsFor(board);
+      if (page.failed && page.key) this.droppedPages.add(page.key);
+
+      const signature = this._boardSignature(page.key, Boolean(page.pixels), view);
       if (this.frames.length && signature === this.lastBoardSignature) {
         this.frames.push({ name: this.frames[this.frames.length - 1].name, at });
         return;
       }
       const name = `board_${String(this.frameIndex).padStart(6, "0")}.png`;
-      // Strokes only. A pasted picture and a document page reach a recording
-      // through the stage capture -- the teacher's own screen -- rather than
-      // being rebuilt here, which is why this no longer needs the pixels of
-      // one and never needed a PDF renderer for the other.
-      writeBoardFrame(path.join(this.frameDir, name), this.room.whiteboard || []);
+      writeBoardFrame(
+        path.join(this.frameDir, name),
+        this.room.whiteboard || [],
+        page.pixels,
+        view,
+      );
       this.frameIndex += 1;
       this.lastBoardSignature = signature;
       this.frames.push({ name, at });
@@ -784,7 +799,9 @@ class CloudRecorder {
       sdpPaths: [this.sdpPath],
       frameDir: this.frameDir,
       boardManifest: this._writeBoardManifest(),
-      stageIndex: this.stageIndex,
+      // Pages the board showed and this server could not draw. The render
+      // lists them so a recording that is missing a worksheet says so.
+      droppedPages: [...this.droppedPages],
       camIndex: this.camIndex,
       screenIndex: this.screenIndex,
       hasAudio: this.hasAudio,
