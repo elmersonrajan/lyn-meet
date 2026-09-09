@@ -7,6 +7,7 @@ const boardPage = require("./boardPage");
 const { buildSdp, buildIngestArgs } = require("./ffmpegArgs");
 const { RECORDINGS_DIR, ensureDir, fileSize } = require("./paths");
 const renderQueue = require("./renderQueue");
+const { recordingSpatialLayer } = require("../config/media");
 
 const log = createLogger("CloudRecorder");
 
@@ -240,6 +241,34 @@ class CloudRecorder {
    * because the SDP ffmpeg started with is fixed and a replacement producer has
    * to arrive on the same port to be picked up.
    */
+  /**
+   * Asks for the top rung of the simulcast ladder.
+   *
+   * The recorder consumes over a plain transport, which has no congestion
+   * control -- so mediasoup has no bandwidth estimate for it and leaves it on
+   * the bottom rung. An hour of class would be recorded at 320x180 and then
+   * scaled up to 720p, which is the blurry recording the ladder exists to
+   * prevent. Students are unaffected: each of their consumers is estimated
+   * separately, and this one is not part of that.
+   *
+   * Only meaningful for a simulcast or SVC consumer. A plain one -- audio, or
+   * a screen share sent as a single stream -- has no layers to choose from.
+   */
+  async _preferBestLayer(consumer, source) {
+    try {
+      if (consumer.kind !== "video") return;
+      if (consumer.type !== "simulcast" && consumer.type !== "svc") return;
+      const spatialLayer = recordingSpatialLayer();
+      await consumer.setPreferredLayers({ spatialLayer });
+      log.info("recording pinned to the best layer", { source, spatialLayer, type: consumer.type });
+    } catch (err) {
+      // Not fatal: the recording still happens, at whatever layer mediasoup
+      // settles on. Worth a line, because it is the difference between a sharp
+      // file and a soft one.
+      log.warn("could not pin the recording to the best layer", { source, error: err.message });
+    }
+  }
+
   async _attach(producer, source, remoteRtpPort = pickPort()) {
     const transport = await this.room.router.createPlainTransport({
       listenInfo: { protocol: "udp", ip: "127.0.0.1" },
@@ -259,6 +288,7 @@ class CloudRecorder {
       paused: true,
     });
     this.consumers.push(consumer);
+    await this._preferBestLayer(consumer, source);
 
     const info = codecInfo(consumer);
     this.tracks.set(source, { ...info, remoteRtpPort, consumer, producerId: producer.id });
@@ -326,6 +356,7 @@ class CloudRecorder {
       paused: true,
     });
     this.consumers.push(consumer);
+    await this._preferBestLayer(consumer, `side:${peer.name}`);
 
     const info = { ...codecInfo(consumer), remoteRtpPort: port };
     const sdpPath = path.join(RECORDINGS_DIR, `${this.id}_side${index}.sdp`);

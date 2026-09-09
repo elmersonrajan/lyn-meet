@@ -2545,3 +2545,52 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ---------- Connection quality ----------
+ *
+ * Bottom-left, above the toolbar and out of the way of the board. Only
+ * rendered at all once the picture is not simply working, so it does not
+ * compete with the lesson for attention.
+ */
+.quality {
+  position: fixed;
+  left: 16px;
+  bottom: 84px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(17, 24, 39, 0.92);
+  color: #e5e7eb;
+  font-size: 12.5px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+
+/* Amber, not red: the class is still running and they can still hear it. */
+.quality-degraded {
+  border-left: 3px solid #f59e0b;
+}
+
+.quality-label {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.quality-select {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font-size: 12.5px;
+}
+
+.quality-note {
+  flex: 1 1 100%;
+  line-height: 1.45;
+  color: #fcd34d;
+}

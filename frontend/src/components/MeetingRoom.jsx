@@ -12,6 +12,7 @@ import WhiteboardTabs from "./WhiteboardTabs.jsx";
 import SharedMedia from "./SharedMedia.jsx";
 import Appreciation from "./Appreciation.jsx";
 import PresencePopup from "./PresencePopup.jsx";
+import ConnectionQuality from "./ConnectionQuality.jsx";
 import ConfirmDialog from "./ConfirmDialog.jsx";
 import YouTubeDialog from "./YouTubeDialog.jsx";
 import ScreenShare from "./ScreenShare.jsx";
@@ -45,6 +46,12 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   // Only guards the moment a request is in flight. Building the file is the
   // server's business and the teacher is never held up by it.
   const [recBusy, setRecBusy] = useState(false);
+  /**
+   * Which rung of the camera ladder this person is being sent, and whether the
+   * server chose it for them. `automatic` is the difference between "I picked
+   * audio only" and "my connection gave up", and only the second needs saying.
+   */
+  const [quality, setQuality] = useState({ mode: "auto", automatic: false });
   // Progress of recordings the server is still building. Purely informational:
   // the teacher may close the tab as soon as they have stopped, and the render
   // carries on regardless.
@@ -307,6 +314,15 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       show(`${peer.name} was removed by ${by}`);
     };
 
+    /**
+     * The server changed what it is sending this person, or is reporting which
+     * rung they are on. Only the mode is surfaced; the per-frame layer numbers
+     * are useful in a log and noise on a screen.
+     */
+    const onQuality = ({ mode, automatic }) =>
+      setQuality({ mode: mode || "auto", automatic: Boolean(automatic) });
+
+    socket.on("video-quality", onQuality);
     socket.on("participants", onParticipants);
     socket.on("peer-joined", onJoined);
     socket.on("peer-left", onLeftPeer);
@@ -341,6 +357,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     socket.on("peer-removed", onRemoved);
 
     return () => {
+      socket.off("video-quality", onQuality);
       socket.off("participants", onParticipants);
       socket.off("peer-joined", onJoined);
       socket.off("peer-left", onLeftPeer);
@@ -693,6 +710,21 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     }
   };
 
+  /**
+   * This person choosing for themselves, which also cancels whatever the
+   * server decided -- so somebody dropped to audio can ask for the picture
+   * back without waiting out the retry.
+   */
+  const onChangeQuality = async (mode) => {
+    try {
+      const res = await emitAck("set-video-quality", { mode });
+      setQuality({ mode: res?.mode || mode, automatic: false });
+    } catch (err) {
+      console.error("[MeetingRoom] set-video-quality failed", err);
+      showToast(err.message);
+    }
+  };
+
   const onLeave = async () => {
     try {
       await emitAck("leave-room", {});
@@ -909,6 +941,17 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         onLowerAllHands={onLowerAllHands}
         onLeave={onLeave}
       />
+
+      {/* Only shown once something is not "just working": an automatic drop to
+          audio, or a choice this person made. A control nobody needs should
+          not be on screen during a lesson. */}
+      {quality.mode !== "auto" ? (
+        <ConnectionQuality
+          mode={quality.mode}
+          automatic={quality.automatic}
+          onChange={onChangeQuality}
+        />
+      ) : null}
 
       <AttendancePanel
         open={attendanceOpen && isCoordinator}

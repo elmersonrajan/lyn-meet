@@ -10,6 +10,7 @@ const {
   onSpeaking,
   normalizeRole,
 } = require("../mediasoup/roomManager");
+const { createController } = require("../mediasoup/videoQuality");
 const { createLogger } = require("../utils/logger");
 const meetingLog = require("../utils/meetingLog");
 const attendance = require("../attendance/attendanceLog");
@@ -218,6 +219,24 @@ function attachSocketHandlers(io) {
     } catch (err) {
       log.error("active-speakers broadcast failed", err);
     }
+  });
+
+  /**
+   * Chooses which rung of the camera ladder each student is sent, and takes
+   * the picture away entirely from one whose line cannot carry the smallest.
+   *
+   * One controller for the whole server: it holds no room state, only a way to
+   * reach a peer, and the per-peer state lives on the peer.
+   */
+  const videoQuality = createController({
+    profile: mediaProfile(),
+    emit: (peer, event, payload) => {
+      try {
+        io.to(peer.socketId).emit(event, payload);
+      } catch (err) {
+        log.error("video quality notice failed", { event, error: err.message });
+      }
+    },
   });
 
   io.on("connection", (socket) => {
@@ -446,6 +465,14 @@ function attachSocketHandlers(io) {
           rtpCapabilities,
           transportId,
         });
+        /**
+         * The new consumer inherits whatever this student is on -- a mode they
+         * chose, or the audio-only the server dropped them to. Without this a
+         * student on a bad line gets the full picture again every time anybody
+         * republishes, which is exactly when their connection is busiest.
+         */
+        const consumer = peer.consumers.get(params.id);
+        if (consumer) await videoQuality.onConsumerCreated(peer, consumer);
         ack(callback, { ok: true, params });
       } catch (err) {
         log.error("consume failed", err);
@@ -462,6 +489,27 @@ function attachSocketHandlers(io) {
         ack(callback, { ok: true });
       } catch (err) {
         log.error("resume-consumer failed", err);
+        ack(callback, { ok: false, error: err.message });
+      }
+    });
+
+    /**
+     * What this student wants to be sent: `auto`, `low`, or `audio-only`.
+     *
+     * Their own connection, their own choice -- no role check. Choosing also
+     * ends any automatic decision the server had made for them, so a student
+     * who was dropped to audio can ask for the picture back immediately
+     * instead of waiting out the retry.
+     */
+    socket.on("set-video-quality", async ({ mode }, callback) => {
+      try {
+        const room = getRoom(socket.data.roomId);
+        const peer = room?.peers.get(socket.data.peerId);
+        if (!room || !peer) throw new Error("Not in a room");
+        const applied = await videoQuality.setMode(peer, mode);
+        ack(callback, { ok: true, mode: applied });
+      } catch (err) {
+        log.error("set-video-quality failed", err);
         ack(callback, { ok: false, error: err.message });
       }
     });
@@ -613,6 +661,7 @@ function attachSocketHandlers(io) {
         const sockets = await io.in(room.id).fetchSockets();
         const targetSock = sockets.find((s) => s.data.peerId === target.id);
         attendance.recordLeave(room.id, target, "removed");
+        videoQuality.forget(target);
         removePeerFromRoom(room, target, { force: true });
         io.to(room.id).emit("peer-removed", {
           peer: target.public(),
@@ -1505,6 +1554,7 @@ async function handleDisconnect(io, socket, { voluntary }) {
     peer.handRaisedAt = null;
     peer.reaction = null;
     peer.reactionAt = null;
+    videoQuality.forget(peer);
     const result = removePeerFromRoom(room, peer, { force });
 
     if (peer.role === "teacher" && result.keptAlive && !voluntary) {
