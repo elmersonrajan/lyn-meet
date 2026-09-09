@@ -28,7 +28,15 @@ async function main() {
   console.log("  writes enabled :", report.enabled ? "yes" : "NO (RECORDING_DB_WRITES)");
   console.log("  public base URL:", report.baseUrl || "NOT SET (RECORDING_PUBLIC_BASE_URL)");
   console.log("  database       :", report.database || "NOT SET (DB_NAME)");
-  console.log("  listening      :", report.subscribed ? "yes" : "no — start() has not run");
+  /**
+   * Always "no" here, and that is correct: this script is its own short-lived
+   * process and never subscribes to anything. The server does. Saying
+   * "start() has not run" read like a fault and sent somebody looking for one.
+   */
+  console.log(
+    "  listening      :",
+    report.subscribed ? "yes" : "not in this process — the server subscribes, not this report",
+  );
   console.log("  table readable :", report.reachable === null ? "not checked" : report.reachable);
   if (report.columns) console.log("  columns        :", report.columns.join(", "));
   if (report.reason) console.log("  >>", report.reason);
