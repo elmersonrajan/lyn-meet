@@ -77,7 +77,7 @@ A screen share is untouched: still a single stream at its own resolution, becaus
 
 ## Verified
 
-`npm test` — 89 passing, 20 new. The ones worth naming, because they cover the failure modes that are invisible until a class is running:
+`npm test` — 93 passing, 24 new. The ones worth naming, because they cover the failure modes that are invisible until a class is running:
 
 - the ladder is ordered small-to-large (reversed, the "top" rung is the *smallest* picture and the recording is sharpest at 320 wide);
 - the capture matches the top rung;
@@ -86,7 +86,9 @@ A screen share is untouched: still a single stream at its own resolution, becaus
 - the countdown to audio-only fires at twelve seconds and not before, and the retry at forty-five;
 - `0` disables the automatic half without disabling the manual choice;
 - a new consumer inherits the student's current mode;
-- an audio or single-stream consumer is left alone rather than errored at.
+- an audio or single-stream consumer is left alone rather than errored at;
+- the camera inset is 320x180 and even (an odd width is rejected outright by H.264 with yuv420p);
+- the inset is scaled with lanczos, and the encode uses the configured crf and preset.
 
 `npm run check` (40 files) and `vite build` pass.
 
@@ -95,5 +97,5 @@ A screen share is untouched: still a single stream at its own resolution, becaus
 1. Teacher and two students. In `chrome://webrtc-internals` on the teacher, confirm three outbound video streams rather than one.
 2. Throttle one student to "Slow 3G" in devtools. Their picture should get smaller and blockier within seconds while the other student's stays sharp — that is the switching working.
 3. Keep throttling. After ~12s their video should stop with a plain explanation, and audio should continue. After ~45s it should try again.
-4. Record a minute and open the file. It should be visibly sharper than yesterday's — that is the recorder on the top rung.
+4. Record a minute and open the file. The teacher should be noticeably bigger and sharper — a 320-wide inset from a 720p source, instead of a 214-wide one from a 360p source.
 5. Watch the teacher's uplink. If it cannot sustain ~2 Mbps, lower `CAM_HIGH_BITRATE` before anything else.
