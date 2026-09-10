@@ -59,6 +59,14 @@ A quiet control, bottom-left, that appears **only** when the picture is not simp
 
 Choosing cancels whatever the server decided, so someone dropped to audio can ask for the picture back immediately instead of waiting out the retry. It is per student and needs no permission: their connection, their choice.
 
+## A recording link a student can actually open
+
+Found while deploying this to UAT, and it defeated the whole point of writing the rows: `/recordings` was **staff-only**, so every link the server put into `YouTubeRecords` returned 401 to a signed-out visitor and 403 to a student. That table is how a student who missed Tuesday finds Tuesday — the plumbing worked and the purpose did not.
+
+It is now `requireAuth`: any signed-in platform user may watch. Not public — these are recordings of children in a classroom and never belong on an open URL. The *listing* endpoints stay staff-only, because "show me every recording on this server" is a different thing from "let me watch the class I missed".
+
+**Known limit, accepted deliberately.** File names are predictable (`10233_09SEP26.mp4`), so a signed-in student who guesses one can watch a class they were not in. Closing that means checking enrolment per file — `auth/enrolment.authorize()` already does exactly this for joining a meeting, and the ScheduleID is the first part of the file name, so it is a small change whenever it is wanted.
+
 ## Configuration
 
 Everything is in `.env` and takes effect on restart — the profile is handed to each browser at join time, so none of it needs a frontend rebuild:
