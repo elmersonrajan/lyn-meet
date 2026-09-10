@@ -8,17 +8,19 @@ import { emitAck } from "../services/socket";
  *
  * The server does say -- it hands a profile over at join time so the numbers
  * can be tuned from a `.env` file rather than by rebuilding this. These are
- * the fallback for an older server, and they are also the documentation: the
- * teacher's tile is a few hundred pixels wide, so capturing 720p and spending
- * two megabits a second on it was paid for by every person in the room and
- * visible to none of them.
+ * the fallback for an older server, and they are also the documentation.
  */
 const DEFAULT_PROFILE = {
   camera: {
-    width: 640,
-    height: 360,
-    frameRate: 20,
-    maxBitrate: 300000,
+    width: 1280,
+    height: 720,
+    frameRate: 24,
+    layers: [
+      { id: "low", scale: 4, maxBitrate: 150000 },
+      { id: "mid", scale: 2, maxBitrate: 500000 },
+      { id: "high", scale: 1, maxBitrate: 1500000 },
+    ],
+    maxBitrate: 600000,
     degradationPreference: "maintain-framerate",
   },
   screen: { maxBitrate: 1200000, maxFramerate: 24 },
@@ -37,21 +39,53 @@ function camConstraints(profile) {
 }
 
 /**
- * The encoding a producer is created with.
+ * The camera, sent as a ladder of sizes at once -- simulcast.
  *
- * maxBitrate is the whole point of this change. Without it the encoder is
- * told only what the picture is, and decides for itself what it is worth --
- * which for a moving 720p picture is a megabit or two.
+ * One encoding forces one compromise on the whole room: small enough for the
+ * worst connection means blurry for everyone else, and blurry in the recording
+ * too. Three encodings let the server hand each student the rung their
+ * connection can carry and give the recorder the top one, without anybody
+ * choosing.
+ *
+ * `scaleResolutionDownBy` divides the captured picture, so the ladder is
+ * relative to what the camera was opened at. Lowest rung FIRST: WebRTC pairs
+ * this array with the encoder's layers in order, and reversing it produces a
+ * top rung that is the smallest picture.
+ *
+ * `L1T3` asks for three temporal layers within each rung -- the server can
+ * then drop a student to a lower frame rate before dropping them a whole rung,
+ * which is a much smaller step down than losing half the resolution.
  */
 function camEncodings(profile) {
   const cam = profile?.camera || DEFAULT_PROFILE.camera;
+  const layers = Array.isArray(cam.layers) && cam.layers.length ? cam.layers : null;
+
+  if (!layers) {
+    // Simulcast switched off on the server: the old single-stream behaviour,
+    // whole and unchanged, rather than a half-configured ladder.
+    return {
+      encodings: [{ maxBitrate: cam.maxBitrate, maxFramerate: cam.frameRate }],
+      codecOptions: {
+        videoGoogleStartBitrate: Math.round(cam.maxBitrate / 1000),
+        videoGoogleMaxBitrate: Math.round(cam.maxBitrate / 1000),
+      },
+    };
+  }
+
+  const top = layers[layers.length - 1];
   return {
-    encodings: [{ maxBitrate: cam.maxBitrate, maxFramerate: cam.frameRate }],
+    encodings: layers.map((layer) => ({
+      rid: layer.id,
+      scaleResolutionDownBy: Math.max(1, Number(layer.scale) || 1),
+      maxBitrate: layer.maxBitrate,
+      maxFramerate: cam.frameRate,
+      scalabilityMode: "L1T3",
+    })),
     codecOptions: {
       // Starting near the ceiling rather than crawling up to it: the first
       // seconds of a lesson should not look like the worst of it.
-      videoGoogleStartBitrate: Math.round(cam.maxBitrate / 1000),
-      videoGoogleMaxBitrate: Math.round(cam.maxBitrate / 1000),
+      videoGoogleStartBitrate: Math.round(top.maxBitrate / 1000),
+      videoGoogleMaxBitrate: Math.round(top.maxBitrate / 1000),
     },
   };
 }
