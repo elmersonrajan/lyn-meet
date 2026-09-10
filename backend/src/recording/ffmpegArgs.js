@@ -23,11 +23,36 @@ function even(n) {
 const LAYOUT_W = even(Number(process.env.RECORDING_WIDTH || 1280));
 const LAYOUT_H = even(Number(process.env.RECORDING_HEIGHT || 720));
 
-// Teacher camera inset, bottom-right. Kept to a sixth of the width so the board
-// or a shared screen stays readable behind it.
-const PIP_W = even(LAYOUT_W / 6);
-const PIP_H = even((LAYOUT_W / 6) * (9 / 16));
+/**
+ * Teacher camera inset, bottom-right.
+ *
+ * A sixth of the width is 214 pixels in a 720p file -- a face too small to
+ * read an expression on, which is most of why a teacher watching their own
+ * recording says the camera "looks bad" even when the stream behind it is
+ * perfect. A quarter is 320, which is a face, and still leaves three quarters
+ * of the frame for the board.
+ *
+ * An absolute width wins over the fraction when both are set, because the
+ * right answer depends on what the class is: a lecture wants the teacher
+ * bigger, a worked example wants the board bigger.
+ */
+const PIP_FRACTION = Number(process.env.RECORDING_PIP_FRACTION || 4);
+const PIP_W = even(
+  Number(process.env.RECORDING_PIP_WIDTH) || LAYOUT_W / (PIP_FRACTION > 0 ? PIP_FRACTION : 4),
+);
+const PIP_H = even(PIP_W * (9 / 16));
 const PIP_MARGIN = 20;
+
+/**
+ * How hard the final encode works.
+ *
+ * The board is flat colour and compresses to nothing; the camera inset is the
+ * only detailed part of the frame, so it is what a lower crf buys. Exposed
+ * because the honest trade is file size and render time against a sharper
+ * face, and the right point depends on the box and the disk.
+ */
+const PRESET = process.env.RECORDING_PRESET || "veryfast";
+const CRF = String(Number(process.env.RECORDING_CRF) || 23);
 
 /**
  * One SDP describing every stream, so a single ffmpeg process ingests all of
@@ -290,8 +315,14 @@ function buildComposeArgs(opts) {
   const audioInput = audioPath ? nextInput++ : null;
   if (audioPath) args.push("-i", audioPath);
 
+  /**
+   * `flags=lanczos` is not decoration. The camera arrives at 1280x720 and is
+   * drawn at 320 wide, which is a 4x reduction -- and ffmpeg's default scaler
+   * (bilinear) turns fine detail into mush at that ratio. Lanczos keeps the
+   * edges. It costs a little CPU on a picture this small and nothing else.
+   */
   const fit = (w, h) =>
-    `scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
+    `scale=${w}:${h}:force_original_aspect_ratio=decrease:flags=lanczos,` +
     `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`;
 
   const chains = [];
@@ -351,8 +382,8 @@ function buildComposeArgs(opts) {
 
   args.push(
     "-c:v", "libx264",
-    "-preset", "veryfast",
-    "-crf", "23",
+    "-preset", PRESET,
+    "-crf", CRF,
     "-pix_fmt", "yuv420p",
     "-r", String(fps),
   );
@@ -394,4 +425,7 @@ module.exports = {
   FPS,
   PIP_W,
   PIP_H,
+  PIP_MARGIN,
+  PRESET,
+  CRF,
 };

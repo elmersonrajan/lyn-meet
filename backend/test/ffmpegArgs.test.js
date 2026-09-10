@@ -1,7 +1,15 @@
 const test = require("node:test");
 const assert = require("node:assert");
 
-const { buildSdp, buildComposeArgs, PIP_W } = require("../src/recording/ffmpegArgs");
+const {
+  buildSdp,
+  buildComposeArgs,
+  PIP_W,
+  PIP_H,
+  PIP_MARGIN,
+  PRESET,
+  CRF,
+} = require("../src/recording/ffmpegArgs");
 
 const rtp = (port) => ({ remoteRtpPort: port, payloadType: 96, codecName: "VP8", clockRate: 90000 });
 
@@ -125,4 +133,54 @@ test("a colour base is bounded by the audio, a board base is not", () => {
   });
   // A colour source runs forever; without this ffmpeg has no reason to stop.
   assert.ok(noPicture.includes("-shortest"), noPicture.join(" "));
+});
+
+/* ---------- The camera inset ---------- */
+
+test("the camera inset is a quarter of the frame, not a sixth", () => {
+  // A sixth of 1280 is 214 pixels: a face too small to read an expression on,
+  // which is what a teacher means by "the camera looks bad in the recording".
+  assert.strictEqual(PIP_W, 320);
+  assert.strictEqual(PIP_H, 180);
+  assert.strictEqual(PIP_W / PIP_H, 16 / 9);
+});
+
+test("the inset is scaled with lanczos, not the default", () => {
+  const args = buildComposeArgs({
+    livePath: "live.mkv",
+    boardVideo: "board.mp4",
+    outputPath: "o.mp4",
+    camIndex: 0,
+    screenIndex: null,
+    hasAudio: true,
+  });
+  const g = graph(args);
+  // 1280 down to 320 is a 4x reduction; bilinear turns fine detail to mush at
+  // that ratio and this is the only detailed part of the frame.
+  assert.ok(g.includes(`scale=${PIP_W}:${PIP_H}:force_original_aspect_ratio=decrease:flags=lanczos`), g);
+});
+
+test("the inset stays clear of the frame edge", () => {
+  const args = buildComposeArgs({
+    livePath: "live.mkv",
+    boardVideo: "board.mp4",
+    outputPath: "o.mp4",
+    camIndex: 0,
+    screenIndex: null,
+    hasAudio: false,
+  });
+  assert.ok(graph(args).includes(`overlay=W-w-${PIP_MARGIN}:H-h-${PIP_MARGIN}`), graph(args));
+});
+
+test("the encode settings are the ones configured", () => {
+  const args = buildComposeArgs({
+    livePath: "live.mkv",
+    boardVideo: "board.mp4",
+    outputPath: "o.mp4",
+    camIndex: null,
+    screenIndex: null,
+    hasAudio: false,
+  });
+  assert.strictEqual(args[args.indexOf("-preset") + 1], PRESET);
+  assert.strictEqual(args[args.indexOf("-crf") + 1], CRF);
 });
