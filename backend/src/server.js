@@ -10,7 +10,7 @@ const cookieParser = require("cookie-parser");
 const { Server } = require("socket.io");
 const { validateAtBoot, config: authConfig } = require("./auth/config");
 const { createAuthRouter } = require("./auth/routes");
-const { attach: attachUser, requireStaff } = require("./auth/middleware");
+const { attach: attachUser, requireAuth, requireStaff } = require("./auth/middleware");
 const socketAuth = require("./auth/socketAuth");
 const db = require("./db/pool");
 const { startWorkers } = require("./mediasoup/workerManager");
@@ -280,8 +280,25 @@ async function main() {
       }),
     );
 
-    // Finished class recordings are student data, not public files.
-    app.use("/recordings", requireStaff, express.static(RECORDINGS_DIR));
+    /**
+     * Watching a recording: any signed-in platform user.
+     *
+     * These files are what `YouTubeRecords` points at, and that table is how a
+     * student who missed Tuesday finds Tuesday. Staff-only meant every link
+     * the server wrote was refused for the people it was written for -- the
+     * plumbing worked and the purpose did not.
+     *
+     * Signed in, not public: they are recordings of children in a classroom
+     * and never belong on an open URL.
+     *
+     * Known limit, accepted deliberately: file names are predictable
+     * (`10233_09SEP26.mp4`), so a signed-in student who guesses one can watch
+     * a class they were not in. Closing that means checking enrolment per
+     * file -- `auth/enrolment.authorize()` already does exactly this for
+     * joining a meeting and the ScheduleID is the first part of the name, so
+     * it is a small change when it is wanted.
+     */
+    app.use("/recordings", requireAuth, express.static(RECORDINGS_DIR));
 
     /**
      * Pictures pasted onto a whiteboard, fetched by every browser in the room.
