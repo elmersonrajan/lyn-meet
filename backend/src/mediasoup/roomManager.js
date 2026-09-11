@@ -30,6 +30,21 @@ function onSpeaking(fn) {
   speakingListener = fn;
 }
 
+/**
+ * Told when a peer is removed by this module rather than by a socket event.
+ *
+ * There is exactly one such case: the teacher grace timer expiring. It fires
+ * on its own clock, long after the socket that owned the teacher has gone, so
+ * nothing in the socket layer is in a position to notice -- and for want of
+ * this the room was never told. The teacher's name and the last frame of their
+ * camera stayed on every screen in the class until some unrelated event
+ * happened to refresh the list.
+ */
+let peerRemovedListener = () => {};
+function onPeerRemoved(fn) {
+  peerRemovedListener = fn;
+}
+
 const ROLES = new Set(["teacher", "student", "coordinator"]);
 
 /**
@@ -719,8 +734,16 @@ function removePeerFromRoom(room, peer, { force = false } = {}) {
           const current = room.peers.get(peer.id);
           if (current && current.disconnected) {
             log.warn("teacher grace expired — removing teacher, room stays", { peerId: peer.id });
+            // Listed before closePeerMedia, which is what destroys them, and
+            // handed out after the peer is gone so the room and the list agree.
+            const producers = [...current.producers.values()].map((p) => ({
+              producerId: p.id,
+              peerId: current.id,
+              source: p.appData && p.appData.source,
+            }));
             room.closePeerMedia(current);
             room.peers.delete(peer.id);
+            peerRemovedListener(room, current, { producers, reason: "grace-expired" });
           }
         } catch (err) {
           log.error("teacher grace cleanup failed", err);
@@ -801,6 +824,7 @@ module.exports = {
   removePeerFromRoom,
   closeRoom,
   onSpeaking,
+  onPeerRemoved,
   TEACHER_GRACE_MS,
   normalizeRole,
   accountKey,

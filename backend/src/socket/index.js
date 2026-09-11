@@ -8,6 +8,7 @@ const {
   removePeerFromRoom,
   closeRoom,
   onSpeaking,
+  onPeerRemoved,
   normalizeRole,
   accountKey,
 } = require("../mediasoup/roomManager");
@@ -74,6 +75,39 @@ function requireStaff(peer) {
 }
 
 /**
+ * Tell the room that this peer's video and audio have stopped.
+ *
+ * Closing a producer on the server does not reach a browser on its own. The
+ * consumers in every other tab simply stop receiving frames -- and a <video>
+ * that stops receiving frames does not go blank, it holds the last one it
+ * decoded. So a teacher who left was still sitting there in the corner of
+ * everyone's screen, looking exactly as present as before, until something
+ * unrelated happened to refresh the page.
+ *
+ * `producer-closed` is the message the browsers already act on; it was only
+ * ever sent for a camera switched off deliberately, never for a peer leaving.
+ *
+ * Split in two because the list has to be taken BEFORE the producers are
+ * closed -- afterwards there is nothing left to enumerate -- while the telling
+ * only happens once the peer is known to be really gone.
+ */
+function producersOf(peer) {
+  return [...peer.producers.values()].map((producer) => ({
+    producerId: producer.id,
+    peerId: peer.id,
+    source: producer.appData && producer.appData.source,
+  }));
+}
+
+function announceMediaGone(io, room, closed) {
+  try {
+    for (const item of closed) io.to(room.id).emit("producer-closed", item);
+  } catch (err) {
+    log.error("announceMediaGone failed", err);
+  }
+}
+
+/**
  * Give up the seat this account is already holding, so it can take a new one.
  *
  * One person, one place in the room. Without this a refresh, a phone waking up
@@ -99,6 +133,7 @@ function releaseSeat(io, room, previous, { joining, reason, quality }) {
     // socket's own disconnect handler can reach the peer.
     attendance.recordLeave(room.id, previous, "replaced");
     quality.forget(previous);
+    announceMediaGone(io, room, producersOf(previous));
     // Force, because a teacher would otherwise be held for the grace period --
     // and the grace period exists for a teacher who is coming back, which is
     // precisely what is happening in this very call.
@@ -274,6 +309,29 @@ function attachSocketHandlers(io) {
       io.to(roomId).emit("active-speakers", { speakers });
     } catch (err) {
       log.error("active-speakers broadcast failed", err);
+    }
+  });
+
+  /**
+   * A teacher whose grace window ran out without them coming back.
+   *
+   * Removing them is done by a timer inside the room, on its own clock, with no
+   * socket anywhere near it -- so this was the one way out of a room that told
+   * nobody. Two minutes after a teacher's laptop shut, the class was still
+   * looking at their name and the last frame their camera sent.
+   */
+  onPeerRemoved((room, peer, { producers }) => {
+    try {
+      log.info("announcing a peer removed by the room itself", {
+        roomId: room.id,
+        peerId: peer.id,
+        role: peer.role,
+      });
+      announceMediaGone(io, room, producers);
+      io.to(room.id).emit("peer-left", peer.public());
+      io.to(room.id).emit("participants", room.participants());
+    } catch (err) {
+      log.error("peer-removed broadcast failed", err);
     }
   });
 
@@ -744,6 +802,7 @@ function attachSocketHandlers(io) {
         const targetSock = sockets.find((s) => s.data.peerId === target.id);
         attendance.recordLeave(room.id, target, "removed");
         videoQuality.forget(target);
+        announceMediaGone(io, room, producersOf(target));
         removePeerFromRoom(room, target, { force: true });
         io.to(room.id).emit("peer-removed", {
           peer: target.public(),
@@ -1637,9 +1696,24 @@ async function handleDisconnect(io, socket, { voluntary }) {
     peer.reaction = null;
     peer.reactionAt = null;
     videoQuality.forget(peer);
+    // Listed before removal closes them: afterwards there is nothing left to
+    // name, and the ids are what the browsers match on.
+    const closed = producersOf(peer);
     const result = removePeerFromRoom(room, peer, { force });
 
     if (peer.role === "teacher" && result.keptAlive && !voluntary) {
+      /**
+       * Nothing is announced as closed here, deliberately.
+       *
+       * The producers are still open -- that is what the grace window is --
+       * and a teacher whose socket merely blipped comes back to the same
+       * media, with no `new-producer` to re-subscribe anybody. Telling the
+       * room the camera had closed would lose it for the rest of the lesson.
+       *
+       * The frozen last frame is stood down by `disconnected` instead, which
+       * is the honest thing to show: they are not gone, they are not here
+       * either.
+       */
       socket.to(room.id).emit("teacher-disconnected", {
         peerId: peer.id,
         message: "Teacher lost connection. Meeting continues.",
@@ -1651,6 +1725,7 @@ async function handleDisconnect(io, socket, { voluntary }) {
 
     if (wasStaff) await lockStudentMicsIfUnstaffed(io, room);
 
+    announceMediaGone(io, room, closed);
     socket.to(room.id).emit("peer-left", peer.public());
     socket.to(room.id).emit("participants", room.participants());
     socket.leave(room.id);
