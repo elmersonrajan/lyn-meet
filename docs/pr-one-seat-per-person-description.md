@@ -139,5 +139,3 @@ now explains the trade instead of just naming it.
 9. Teacher pulls their network out and puts it back inside the window. The class
    gets them back, picture included — that is the case that would break if the
    grace window announced a close.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
