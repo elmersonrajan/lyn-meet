@@ -803,7 +803,7 @@ function attachSocketHandlers(io) {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
-        requireStaff(peer);
+        requireTeacher(peer);
         room.stageMode = mode;
         io.to(room.id).emit("stage-mode", { mode });
         ack(callback, { ok: true });
@@ -1121,7 +1121,7 @@ function attachSocketHandlers(io) {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
-        requireStaff(peer);
+        requireTeacher(peer);
         room.media = buildMedia(payload);
         room.stageMode = "media";
         log.action("share-media", { roomId: room.id, kind: room.media.kind, title: room.media.title });
@@ -1145,7 +1145,7 @@ function attachSocketHandlers(io) {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
-        requireStaff(peer);
+        requireTeacher(peer);
         if (!room.media) throw new Error("Nothing is being played");
         const position = Number.isFinite(Number(positionSec))
           ? Math.max(0, Number(positionSec))
@@ -1167,7 +1167,7 @@ function attachSocketHandlers(io) {
       try {
         const room = getRoom(socket.data.roomId);
         const peer = room?.peers.get(socket.data.peerId);
-        requireStaff(peer);
+        requireTeacher(peer);
         room.media = null;
         room.stageMode = "whiteboard";
         io.to(room.id).emit("shared-media-stopped", {});
