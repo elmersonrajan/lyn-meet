@@ -114,9 +114,49 @@ now visible from the first second (`reconnecting…`, tile stood down) and it en
 when it says it ends. `TEACHER_RECONNECT_GRACE_MS` is the dial, and `.env.example`
 now explains the trade instead of just naming it.
 
+## The one underneath all of them
+
+The clue was in the report: *"in attendance it is updating live like that, the
+name and video also should work."*
+
+The attendance panel is fetched over **HTTP**. It asks the server every time, so
+it was right about everything. The participant list, the instructor tile, the
+board and the toolbar are all **pushed down the socket** — and they had all
+stopped at the same moment, showing the last thing that browser happened to hear.
+
+A socket.io reconnect is a **new socket**. The server hands it a fresh
+`socket.data` with no peer and no room, and `join-room` is emitted exactly once,
+from the lobby, and never again. So one blip — a laptop sleeping, a wifi handover,
+a proxy timing out an idle websocket — detached the browser from the meeting
+permanently. The server had long since removed that peer and told the room; there
+was simply nobody left listening on that socket.
+
+And nothing said so. The screen looked like a working meeting.
+
+That is the same symptom as the frozen teacher, and it would have survived every
+fix above: the messages were being sent correctly to a socket that was no longer
+anybody.
+
+**Now:** a red bar across the top the moment the socket drops, and a rejoin when
+it comes back.
+
+The rejoin is a page load, not a hand-rolled re-initialise. The transports, the
+producers and every consumer died with the old socket and would all have to be
+rebuilt in the right order; a load does precisely that through the path every
+normal arrival already takes, and the link in the address bar carries the class,
+so it comes back on its own with no click.
+
+A page load also starts a fresh JavaScript world, which is why the loop guard
+lives in session storage — an in-memory flag cannot see the reload before it, and
+on a line that is flapping rather than broken that is connect, drop, reload,
+connect, drop, and a teacher who never gets a word out. Twenty seconds between
+attempts; after that the bar stays up with a **Rejoin** button and it is their
+choice.
+
 ## Verified
 
-`npm test` — 100 passing, 7 new. `npm run check` (40 files) passes.
+`npm test` — 100 passing in the backend, 7 new; 7 more in the frontend, which now
+has a test script of its own. `npm run check` (41 files) and `vite build` pass.
 
 **Worth checking on the server:**
 
@@ -139,5 +179,8 @@ now explains the trade instead of just naming it.
 9. Teacher pulls their network out and puts it back inside the window. The class
    gets them back, picture included — that is the case that would break if the
    grace window announced a close.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+10. The one that matters most, and the one nobody was testing: in devtools,
+    Network → **Offline** for a few seconds, then back on. The red bar appears
+    immediately, and the tab rejoins on its own. Before this it would have sat
+    there looking perfectly normal and receiving nothing for the rest of the
+    lesson.

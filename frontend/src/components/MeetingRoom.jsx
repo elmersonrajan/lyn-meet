@@ -22,6 +22,7 @@ import RecordingStatus from "./RecordingStatus.jsx";
 import AttendancePanel from "./AttendancePanel.jsx";
 import MeetingInfo from "./MeetingInfo.jsx";
 import { syncUrlToMeeting } from "../services/meetingLink.js";
+import { shouldReloadNow } from "../services/rejoinGuard.js";
 import { APPRECIATIONS } from "../services/appreciations.js";
 import { IconPen, IconScreen, IconClip, IconYouTube } from "./Icons.jsx";
 
@@ -57,6 +58,14 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   // carries on regardless.
   const [recJobs, setRecJobs] = useState(joinPayload.recordingJobs || []);
   const [toast, setToast] = useState("");
+  /**
+   * The socket has gone and this browser is no longer part of the meeting.
+   *
+   * Worth its own state rather than a toast: a toast says something happened
+   * four seconds ago, and this is a condition that lasts until it is fixed.
+   * Everything on this screen is frozen while it is true.
+   */
+  const [connectionLost, setConnectionLost] = useState(false);
   const [teacherDisconnected, setTeacherDisconnected] = useState(false);
   // What the class is watching together, straight from the server: a clip
   // somebody uploaded or a YouTube video, with the position everyone shares.
@@ -392,6 +401,58 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
       socket.off("peer-removed", onRemoved);
     };
   }, [socket, media, onLeft, setSession, showToast, isStaff, session.peer?.id]);
+
+  /**
+   * Being cut off, and getting back in.
+   *
+   * A socket.io reconnect is a NEW socket: the server gives it a fresh
+   * `socket.data` holding no peer and no room, and nothing in this app ever
+   * re-sent `join-room`. So a single blip -- a laptop sleeping, a wifi handover,
+   * a proxy timing out a websocket -- detached the browser from the meeting
+   * permanently, while the screen went on showing the last thing it had heard.
+   *
+   * That is what a frozen participant list and a teacher who never leaves
+   * actually are. The attendance panel kept working through all of it because
+   * it is fetched over HTTP and asks the server every time; everything else in
+   * this room is pushed down the socket, so everything else stopped.
+   *
+   * Rejoining is a page load rather than a hand-rolled re-init. The transports,
+   * the producers and every consumer died with the old socket and would all
+   * have to be rebuilt; a load does exactly that through the same path used for
+   * every normal arrival, and the link in the address bar carries the class, so
+   * it comes back on its own.
+   */
+  useEffect(() => {
+    if (!socket) return undefined;
+
+    const onDown = () => {
+      console.warn("[MeetingRoom] socket lost — this browser is no longer in the meeting");
+      setConnectionLost(true);
+    };
+
+    /**
+     * Only ever a RE-connect here: the first one happened in the lobby, before
+     * this component existed.
+     */
+    const onBack = () => {
+      console.warn("[MeetingRoom] socket back on a new id — rejoining");
+      syncUrlToMeeting(session.meetingId);
+      if (!shouldReloadNow()) {
+        // Reloading again this soon would be a loop on a flapping line. The
+        // bar stays up with a button, so it is their choice and not a cycle.
+        setConnectionLost(true);
+        return;
+      }
+      window.location.reload();
+    };
+
+    socket.on("disconnect", onDown);
+    socket.on("connect", onBack);
+    return () => {
+      socket.off("disconnect", onDown);
+      socket.off("connect", onBack);
+    };
+  }, [socket, session.meetingId]);
 
   const setStage = async (mode) => {
     try {
@@ -1000,6 +1061,19 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         }
         onError={showToast}
       />
+      {connectionLost ? (
+        <div className="conn-lost" role="alert">
+          <span>Connection lost — you are no longer in the meeting.</span>
+          <button
+            onClick={() => {
+              syncUrlToMeeting(session.meetingId);
+              window.location.reload();
+            }}
+          >
+            Rejoin
+          </button>
+        </div>
+      ) : null}
       {toast ? <div className="toast">{toast}</div> : null}
 
       {/* Above everything, briefly, for everyone in the room. */}

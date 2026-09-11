@@ -2594,3 +2594,42 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   line-height: 1.45;
   color: #fcd34d;
 }
+
+/* A dropped socket, said out loud.
+   Across the whole top rather than as a toast: everything below it is frozen,
+   and that is not a thing to mention for four seconds and take away. Red, and
+   above every dialog, because no other message on this screen matters while it
+   is up. */
+.conn-lost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: #b3261e;
+  color: #fff;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  z-index: 60;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+
+.conn-lost button {
+  background: #fff;
+  color: #b3261e;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.conn-lost button:hover {
+  background: #ffe9e7;
+}
