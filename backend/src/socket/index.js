@@ -9,6 +9,7 @@ const {
   closeRoom,
   onSpeaking,
   normalizeRole,
+  accountKey,
 } = require("../mediasoup/roomManager");
 const { createController } = require("../mediasoup/videoQuality");
 const { createLogger } = require("../utils/logger");
@@ -69,6 +70,61 @@ function isStaff(peer) {
 function requireStaff(peer) {
   if (!isStaff(peer)) {
     throw new Error("Only the teacher or coordinator can perform this action");
+  }
+}
+
+/**
+ * Give up the seat this account is already holding, so it can take a new one.
+ *
+ * One person, one place in the room. Without this a refresh, a phone waking up
+ * or a second tab leaves the old Peer in the list until socket.io finally gives
+ * up on the connection behind it -- up to forty-five seconds of the class, the
+ * teacher's panel and the register each showing the same person two or three
+ * times over.
+ *
+ * The newest connection wins, deliberately. The old one is the one that has
+ * already stopped working, and the person is looking at the new one.
+ *
+ * `joining` is excluded from the teardown: if the same socket somehow joins
+ * twice, disconnecting it here would kill the join it is in the middle of.
+ */
+function releaseSeat(io, room, previous, { joining, reason, quality }) {
+  try {
+    log.info("replacing an earlier seat for the same account", {
+      roomId: room.id,
+      peerId: previous.id,
+      role: previous.role,
+    });
+    // Written while name and role are still readable, and before the old
+    // socket's own disconnect handler can reach the peer.
+    attendance.recordLeave(room.id, previous, "replaced");
+    quality.forget(previous);
+    // Force, because a teacher would otherwise be held for the grace period --
+    // and the grace period exists for a teacher who is coming back, which is
+    // precisely what is happening in this very call.
+    removePeerFromRoom(room, previous, { force: true });
+    if (room.teacherLeaveTimer) {
+      clearTimeout(room.teacherLeaveTimer);
+      room.teacherLeaveTimer = null;
+    }
+
+    const old = io.sockets.sockets.get(previous.socketId);
+    if (old && old.id !== joining.id) {
+      // Cleared first: the disconnect below runs the normal handler, which
+      // would otherwise look up this peer and record a second leave.
+      old.data.peerId = null;
+      old.data.roomId = null;
+      old.emit("kicked", { reason });
+      old.leave(room.id);
+      old.leave(staffRoom(room.id));
+      old.disconnect(true);
+    }
+
+    io.to(room.id).emit("peer-left", previous.public());
+    io.to(room.id).emit("participants", room.participants());
+  } catch (err) {
+    // A seat that could not be cleared is a duplicate name, not a failed join.
+    log.error("releaseSeat failed", err);
   }
 }
 
@@ -304,7 +360,14 @@ function attachSocketHandlers(io) {
 
         if (role === "teacher") {
           const currentTeacher = room.getTeacher();
-          if (currentTeacher && !currentTeacher.disconnected) {
+          // Their own earlier connection is not "another teacher". Refusing it
+          // is how a teacher who refreshed mid-lesson ended up locked out of
+          // their own class until the socket behind the old tab timed out.
+          const sameAccount =
+            currentTeacher &&
+            currentTeacher.email &&
+            accountKey(currentTeacher.email) === accountKey(auth.email);
+          if (currentTeacher && !currentTeacher.disconnected && !sameAccount) {
             throw new Error("This meeting already has an active teacher");
           }
           if (currentTeacher && currentTeacher.disconnected) {
@@ -347,6 +410,25 @@ function attachSocketHandlers(io) {
             ack(callback, joinAck(room, currentTeacher, { reconnected: true }));
             return;
           }
+        }
+
+        /**
+         * One person, one seat.
+         *
+         * Anything still here under this account is the connection they have
+         * just replaced -- a refreshed tab, a phone that went to sleep, a
+         * second window. Left alone it stays in the participant list until
+         * socket.io gives up on it, which is where the duplicate names came
+         * from. The teacher's own reconnect is handled above and has already
+         * returned by this point.
+         */
+        const previous = room.findPeerByAccount(auth.email);
+        if (previous) {
+          releaseSeat(io, room, previous, {
+            joining: socket,
+            quality: videoQuality,
+            reason: "You joined this class again somewhere else.",
+          });
         }
 
         const peer = new Peer({

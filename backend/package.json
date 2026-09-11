@@ -9,7 +9,7 @@
     "dev": "node --watch src/server.js",
     "check:recording": "node scripts/check-recording.js",
     "check:recording-db": "node scripts/check-recording-db.js",
-    "test": "node --test test/auth.test.js test/attendanceDb.test.js test/sharedStage.test.js test/boardImages.test.js test/whiteboardFrame.test.js test/publishRecording.test.js test/ffmpegArgs.test.js test/videoQuality.test.js"
+    "test": "node --test test/auth.test.js test/attendanceDb.test.js test/sharedStage.test.js test/boardImages.test.js test/whiteboardFrame.test.js test/publishRecording.test.js test/ffmpegArgs.test.js test/videoQuality.test.js test/roomSeats.test.js"
   },
   "engines": {
     "node": ">=18"
