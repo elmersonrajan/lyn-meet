@@ -7,7 +7,8 @@
     "dev": "vite --host --port 5173",
     "build": "vite build",
     "preview": "vite preview --host --port 5173",
-    "check": "node scripts/check-jsx.cjs"
+    "check": "node scripts/check-jsx.cjs",
+    "test": "node --test test/rejoinGuard.test.js"
   },
   "dependencies": {
     "mediasoup-client": "^3.8.1",
