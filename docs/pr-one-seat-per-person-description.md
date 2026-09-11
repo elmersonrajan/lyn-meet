@@ -70,6 +70,50 @@ Everything else a coordinator does is untouched — muting, attendance, polls, Q
 recording, removing someone, ending the session. Those are the job; presenting is
 not. A student never saw any of it.
 
+## Why a teacher who left stayed on screen
+
+Reported separately, and it turned out to be three faults stacked on the same
+symptom — the name still listed, the camera still showing their face.
+
+**1. Nothing told the browsers the camera had stopped.** Closing a producer on
+the server does not reach a browser on its own: the consumers in every other tab
+simply stop receiving frames. A `<video>` that stops receiving frames does not go
+blank — it holds the last frame it decoded, indefinitely, looking exactly as
+present as before. `producer-closed` is the message the browsers already act on,
+and it was only ever sent for a camera switched off on purpose, never for someone
+leaving, being removed, or having their seat replaced. All three send it now.
+
+Not during the teacher's grace window, deliberately: the producers are still open
+there — that is what the window *is* — and a teacher whose socket merely blipped
+comes back to the same media, with no `new-producer` to re-subscribe anybody.
+Announcing a close would lose their camera for the rest of the lesson.
+
+**2. The grace window expiring told nobody at all.** That removal is done by a
+timer inside the room, on its own clock, with no socket anywhere near it. It
+deleted the peer and stopped. So two minutes after a teacher's laptop shut, the
+class was still looking at their name and their last frame, and only an unrelated
+event — somebody else joining — would ever clear it. The room can now say a peer
+went, and the socket layer listens.
+
+**3. The tile could not show "reconnecting" while a frozen frame existed.** It
+chose what to display from the track alone, and offered the away message only
+when there was no picture at all — which is never, for the reason in (1). The
+branch written for a dropped teacher was unreachable in exactly the case it was
+for. A frozen frame is the least true of the three things that tile can show, so
+it now loses to both of the others.
+
+### On the two minutes
+
+Pressing **Leave** is immediate and never waits for the grace window. Only a
+connection that vanishes — a closed tab, a dead network — takes that path, and
+holding the place is the point: the room, the board and a running recording all
+survive the gap and the teacher walks back into the class they left.
+
+What was wrong was that it was invisible and unbounded, not that it exists. It is
+now visible from the first second (`reconnecting…`, tile stood down) and it ends
+when it says it ends. `TEACHER_RECONNECT_GRACE_MS` is the dial, and `.env.example`
+now explains the trade instead of just naming it.
+
 ## Verified
 
 `npm test` — 100 passing, 7 new. `npm run check` (40 files) passes.
@@ -87,5 +131,13 @@ not. A student never saw any of it.
    YouTube. Right-click the board: no Play Video / YouTube. The bottom bar is
    unchanged.
 6. As the teacher, all four still work.
+7. Teacher presses **Leave**. Their name and their picture both go at once, on
+   every other screen.
+8. Teacher closes the tab instead. Within a moment they read `reconnecting…` and
+   the tile says so; when the grace window ends they disappear on their own,
+   with nothing else having to happen to make it so.
+9. Teacher pulls their network out and puts it back inside the window. The class
+   gets them back, picture included — that is the case that would break if the
+   grace window announced a close.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
