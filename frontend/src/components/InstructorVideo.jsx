@@ -23,8 +23,18 @@ export default function InstructorVideo({ stream, name, disconnected, muted, mir
    * and nothing else. Rendering a <video> for that shows a black rectangle,
    * which reads as a fault rather than as a camera that is off.
    */
+  /**
+   * A dropped connection is not a picture either, whatever the track says.
+   *
+   * WebRTC does not end a receiving track when the sender's signalling dies --
+   * frames simply stop arriving, and the <video> goes on displaying the last
+   * one it decoded. So a teacher whose laptop shut sat there apparently
+   * present, and "Teacher reconnecting…" was unreachable because it was only
+   * offered when there was no picture at all. The frozen frame is the least
+   * true of the three things this tile can show, so it loses to both.
+   */
   const hasPicture = Boolean(
-    stream && stream.getVideoTracks().some((track) => track.readyState === "live"),
+    !disconnected && stream && stream.getVideoTracks().some((track) => track.readyState === "live"),
   );
 
   useEffect(() => {

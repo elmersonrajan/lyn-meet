@@ -764,6 +764,15 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
    * can tell them what they already know.
    */
   const teacherCamOff = Boolean(teacherPeer?.videoOff);
+  /**
+   * Two ways of learning the same thing, because one message can be missed.
+   *
+   * `teacher-disconnected` is sent once, to whoever is in the room at that
+   * moment; the flag on the participant row comes with every roster update, so
+   * it also reaches anyone who arrives mid-gap or reconnects during it. Either
+   * is enough to stand the tile down.
+   */
+  const teacherAway = teacherDisconnected || Boolean(teacherPeer?.disconnected);
   const instructorStream = isTeacher
     ? media.camOn
       ? media.localStream
@@ -895,7 +904,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
           <InstructorVideo
             stream={instructorStream}
             name={teacherName}
-            disconnected={teacherDisconnected}
+            disconnected={teacherAway}
             muted={isTeacher}
             // Only when this is the teacher's own camera. The same tile shows
             // the teacher to everyone else, and flipping it for them would put
