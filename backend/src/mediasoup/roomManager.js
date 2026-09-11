@@ -49,6 +49,17 @@ function normalizeRole(role) {
   return ROLES.has(r) ? r : "student";
 }
 
+/**
+ * Who a peer belongs to, in a form two joins can be compared by.
+ *
+ * Compared case-insensitively because the platform is not consistent about it:
+ * the same account comes back as "Ida.Sharon@..." one day and "ida.sharon@..."
+ * the next, and a comparison that cared would seat that person twice.
+ */
+function accountKey(email) {
+  return String(email || "").trim().toLowerCase() || null;
+}
+
 class Peer {
   constructor({ id, socketId, name, role, email = null }) {
     this.id = id;
@@ -258,6 +269,32 @@ class Room {
 
   getStaff() {
     return [...this.peers.values()].filter((p) => p.role === "teacher" || p.role === "coordinator");
+  }
+
+  /**
+   * The seat this account already holds here, if it holds one.
+   *
+   * A Peer is a socket, not a person: every join mints a fresh uuid, so someone
+   * whose phone dropped and came back arrives as a second row beside the first.
+   * The first is not cleared until socket.io gives up on the dead connection --
+   * up to forty-five seconds during which the class list, the teacher's
+   * participant panel and the register all show two of them. That is the
+   * duplicate names people report, and refreshing the tab reproduces it every
+   * time.
+   *
+   * The account is the only thing that survives a reconnect, so it is what a
+   * seat has to be keyed on. Peers with no email at all -- ad-hoc rooms, or
+   * AUTH_DISABLED in development -- are never matched to each other: there is
+   * nothing there to say they are the same person.
+   */
+  findPeerByAccount(email, { exclude = null } = {}) {
+    const wanted = accountKey(email);
+    if (!wanted) return null;
+    for (const peer of this.peers.values()) {
+      if (exclude && peer.id === exclude) continue;
+      if (accountKey(peer.email) === wanted) return peer;
+    }
+    return null;
   }
 
   participants() {
@@ -766,4 +803,5 @@ module.exports = {
   onSpeaking,
   TEACHER_GRACE_MS,
   normalizeRole,
+  accountKey,
 };
