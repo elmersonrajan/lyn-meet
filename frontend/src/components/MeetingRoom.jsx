@@ -395,7 +395,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
 
   const setStage = async (mode) => {
     try {
-      if (!isStaff) return;
+      if (!isTeacher) return;
       console.log("[MeetingRoom] setStage", mode);
       if (mode === "screen") {
         if (!media.sharing) await media.startScreen();
@@ -557,7 +557,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
    * easy to miss, and a silent video is the failure this feature is for.
    */
   const playVideo = async () => {
-    if (!isStaff) return;
+    if (!isTeacher) return;
     setVideoHelpOpen(false);
     setMediaBusy(true);
     try {
@@ -582,7 +582,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
    * it to a video id or refuses it.
    */
   const shareYouTube = async (url) => {
-    if (!isStaff) return;
+    if (!isTeacher) return;
     setMediaBusy(true);
     setYtError("");
     try {
@@ -600,7 +600,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
 
   /** Play, pause and seek, from the staff player to everyone else's. */
   const onMediaControl = async ({ action, positionSec }) => {
-    if (!isStaff) return;
+    if (!isTeacher) return;
     try {
       await emitAck("media-control", { action, positionSec });
     } catch (err) {
@@ -609,7 +609,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   };
 
   const stopMedia = async () => {
-    if (!isStaff) return;
+    if (!isTeacher) return;
     try {
       await emitAck("stop-media", {});
     } catch (err) {
@@ -797,7 +797,17 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
                 onRemove={(id, name) => setBoardToDelete({ id, name })}
               />
             ) : null}
-            {isStaff ? (
+            {/*
+              The teacher's, not staff's.
+
+              A coordinator supervises a class; they do not teach it. They
+              cannot draw either -- the board has been teacher-only for a while
+              -- so a Draw tab that switches the whole class to a page they are
+              unable to write on is a button that only does harm, and Screen,
+              Play Video and YouTube take the lesson off the teacher mid-flow.
+              Their own tools are all in the bar along the bottom.
+            */}
+            {isTeacher ? (
               <div className="stage-tools">
                 <button
                   className={stageMode === "draw" || stageMode === "whiteboard" ? "active" : ""}
@@ -854,9 +864,9 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
                 // The right-click menu offers these two, because a teacher
                 // who wants to "put a video on the board" is looking at the
                 // board when they think it.
-                onPlayVideo={isStaff ? () => setVideoHelpOpen(true) : null}
+                onPlayVideo={isTeacher ? () => setVideoHelpOpen(true) : null}
                 onYouTube={
-                  isStaff
+                  isTeacher
                     ? () => {
                         setYtError("");
                         setYtOpen(true);
@@ -870,9 +880,10 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
             ) : showMedia ? (
               <SharedMedia
                 media={sharedMedia}
-                // Staff drive; everyone else follows. A student with a scrubber
-                // is a class that has stopped watching the same thing.
-                canControl={isStaff}
+                // The teacher drives; everyone else follows. A second pair of
+                // hands on the scrubber is a class that has stopped watching
+                // the same thing.
+                canControl={isTeacher}
                 onControl={onMediaControl}
                 onStop={stopMedia}
               />
