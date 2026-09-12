@@ -30,6 +30,7 @@ const renderQueue = require("../recording/renderQueue");
 const rosterSync = require("./rosterSync");
 const orphanReaper = require("./orphanReaper");
 const enrolment = require("../auth/enrolment");
+const { classLabel } = require("../auth/classLabel");
 
 const log = createLogger("Socket");
 
@@ -266,6 +267,9 @@ function joinAck(room, peer, extra = {}) {
     routerRtpCapabilities: room.router.rtpCapabilities,
     iceServers: getIceServers(),
     stageMode: room.stageMode,
+    // The platform's own name for this lesson, shown beside the id. A room id
+    // is a ScheduleID and tells nobody which class they are in.
+    className: room.className,
     // What each browser should capture and how much it may spend doing it.
     // Sent by the server so it can be tuned without rebuilding the frontend.
     mediaProfile: mediaProfile(),
@@ -465,6 +469,23 @@ function attachSocketHandlers(io) {
         const name = displayNameFor(role, auth.name);
 
         const room = await getOrCreateRoom(meetingId);
+
+        /**
+         * Name the room from the schedule, once.
+         *
+         * Every join resolves the same class, so this settles on the first one
+         * and is then the same string for everybody -- a student arriving
+         * forty minutes late reads what the teacher has been looking at since
+         * the start. Re-set only if it is still unknown, so a lookup that came
+         * back thin cannot later overwrite a good name with nothing.
+         */
+        if (!room.className) {
+          const named = classLabel(verdict.meeting);
+          if (named) {
+            room.className = named;
+            log.info("room named from the schedule", { roomId: room.id, className: named });
+          }
+        }
 
         if (role === "teacher") {
           const currentTeacher = room.getTeacher();

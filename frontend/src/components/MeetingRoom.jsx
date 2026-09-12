@@ -961,7 +961,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
           </div>
         </div>
         <aside className="side">
-          <MeetingInfo meetingId={session.meetingId} />
+          <MeetingInfo meetingId={session.meetingId} className={joinPayload.className} />
           <InstructorVideo
             stream={instructorStream}
             name={teacherName}

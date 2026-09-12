@@ -304,9 +304,28 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   font-size: 13px;
   font-weight: 700;
   color: var(--navy);
+  /* The id is short and fixed, so it never gives up room: the class name
+     beside it is what shrinks when the panel is narrow. */
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* The class name. Not monospace -- it is prose, not an identifier -- and it
+   takes whatever width is left, cut with an ellipsis rather than wrapping the
+   strip onto a second line. The full name is on the title attribute. */
+.mi-class {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Reads as "10242 · Physics" rather than two things that happen to be
+     adjacent. */
+  border-left: 1px solid #dbe4f0;
+  padding-left: 8px;
 }
 
 @media (max-width: 640px) {
