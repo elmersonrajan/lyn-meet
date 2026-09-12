@@ -511,6 +511,52 @@ async function main() {
       maxHttpBufferSize: 20 * 1024 * 1024,
     });
 
+    /**
+     * Who the SERVER thinks is in a room, and whether their socket still
+     * exists.
+     *
+     * Every "someone left but their name is still there" report so far has
+     * been answered by guessing, because there was no way to ask. The two
+     * possible truths look identical from a screenshot: the peer is really
+     * gone and a browser did not hear about it, or the peer is genuinely still
+     * in the room and every browser is correct.
+     *
+     * `socketAlive: false` is the interesting one. It means a Peer is being
+     * held by a connection that no longer exists -- an orphan -- and the
+     * participant list showing them is not a display fault at all.
+     *
+     * Defined here rather than with the other routes because it is the only
+     * one that needs `io`, which does not exist until this point.
+     */
+    app.get("/api/rooms/:meetingId/peers", requireStaff, (req, res) => {
+      try {
+        const room = rooms.get(String(req.params.meetingId || "").trim().toUpperCase());
+        if (!room) {
+          return res.json({ ok: true, found: false, rooms: [...rooms.keys()] });
+        }
+        const now = Date.now();
+        res.json({
+          ok: true,
+          found: true,
+          roomId: room.id,
+          count: room.peers.size,
+          peers: [...room.peers.values()].map((p) => ({
+            name: p.name,
+            role: p.role,
+            peerId: p.id,
+            socketId: p.socketId,
+            socketAlive: io.sockets.sockets.has(p.socketId),
+            disconnected: p.disconnected,
+            joinedMinutesAgo: Math.round((now - p.joinedAt) / 60000),
+            producers: p.producers.size,
+          })),
+        });
+      } catch (err) {
+        log.error("/api/rooms/:meetingId/peers failed", err);
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
+
     // Installed BEFORE the handlers: an unauthenticated socket must never
     // reach `join-room`. This is the real gate -- the REST endpoints above are
     // not how anyone gets into a meeting.
