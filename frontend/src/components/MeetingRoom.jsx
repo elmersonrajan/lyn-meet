@@ -83,6 +83,16 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   // would be neither.
   const [award, setAward] = useState(null);
   const [confirmEnd, setConfirmEnd] = useState(false);
+  /**
+   * Leave sits next to End Session, and both are red.
+   *
+   * End Session already asks. Leave did not, so the one that empties the room
+   * was guarded and the one beside it was a single click -- and for a teacher
+   * mid-lesson leaving is not much less costly: the class keeps running, but
+   * they are out of it and everyone watches them go.
+   */
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const [ytOpen, setYtOpen] = useState(false);
   const [ytError, setYtError] = useState("");
   const [endingSession, setEndingSession] = useState(false);
@@ -787,11 +797,15 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   };
 
   const onLeave = async () => {
+    setLeaving(true);
     try {
       await emitAck("leave-room", {});
     } catch (err) {
       console.error("[MeetingRoom] leave failed", err);
     } finally {
+      // Not reset: this component is on its way out, and a button that says
+      // "Working…" until it goes is honest about what is happening.
+      setConfirmLeave(false);
       media.cleanup();
       setSession((s) => ({ ...s, joined: false }));
       onLeft();
@@ -1020,7 +1034,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         onOpenAttendance={() => setAttendanceOpen(true)}
         onToggleHand={onToggleHand}
         onLowerAllHands={onLowerAllHands}
-        onLeave={onLeave}
+        onLeave={() => setConfirmLeave(true)}
       />
 
       {/* Only shown once something is not "just working": an automatic drop to
@@ -1105,6 +1119,22 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         error={ytError}
         onPlay={shareYouTube}
         onCancel={() => setYtOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={confirmLeave}
+        title="Leave this class?"
+        message={
+          isTeacher
+            ? "The class keeps running and you can come back in, but the students will see you go."
+            : "You can rejoin from the same link afterwards."
+        }
+        confirmLabel="Leave"
+        cancelLabel="Stay"
+        danger
+        busy={leaving}
+        onConfirm={onLeave}
+        onCancel={() => setConfirmLeave(false)}
       />
 
       <ConfirmDialog
