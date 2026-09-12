@@ -161,6 +161,15 @@ class Room {
      * everybody else.
      */
     this.media = null;
+    /**
+     * What this class is called, from the platform's own schedule.
+     *
+     * Held on the room rather than worked out per person: it is the same
+     * lesson for everybody, and it must read identically on the teacher's
+     * screen and on a student who joined forty minutes late. Null for an
+     * ad-hoc room, which has no schedule behind it to name.
+     */
+    this.className = null;
   }
 
   /**

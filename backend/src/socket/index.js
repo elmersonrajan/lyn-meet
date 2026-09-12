@@ -28,7 +28,9 @@ const {
 } = require("./sharedStage");
 const renderQueue = require("../recording/renderQueue");
 const rosterSync = require("./rosterSync");
+const orphanReaper = require("./orphanReaper");
 const enrolment = require("../auth/enrolment");
+const { classLabel } = require("../auth/classLabel");
 
 const log = createLogger("Socket");
 
@@ -265,6 +267,9 @@ function joinAck(room, peer, extra = {}) {
     routerRtpCapabilities: room.router.rtpCapabilities,
     iceServers: getIceServers(),
     stageMode: room.stageMode,
+    // The platform's own name for this lesson, shown beside the id. A room id
+    // is a ScheduleID and tells nobody which class they are in.
+    className: room.className,
     // What each browser should capture and how much it may spend doing it.
     // Sent by the server so it can be tuned without rebuilding the frontend.
     mediaProfile: mediaProfile(),
@@ -313,6 +318,27 @@ function attachSocketHandlers(io) {
    * holds `io`, and because the thing it is backstopping is the push above it.
    */
   rosterSync.start(io, rooms);
+
+  /**
+   * And the level below that: the room reconciled against which sockets exist.
+   *
+   * Repeating the roster only helps when the roster is right. A peer whose
+   * socket has gone is the room itself being wrong, and every browser showing
+   * that person is reporting it faithfully.
+   */
+  orphanReaper.start(io, rooms, (room, peer) => {
+    try {
+      attendance.recordLeave(room.id, peer, "connection lost");
+      videoQuality.forget(peer);
+      const closed = producersOf(peer);
+      removePeerFromRoom(room, peer, { force: true });
+      announceMediaGone(io, room, closed);
+      io.to(room.id).emit("peer-left", peer.public());
+      io.to(room.id).emit("participants", room.participants());
+    } catch (err) {
+      log.error("removing an orphaned peer failed", err);
+    }
+  });
 
   onSpeaking((roomId, speakers) => {
     try {
@@ -367,6 +393,24 @@ function attachSocketHandlers(io) {
     log.info("client connected", { socketId: socket.id });
     socket.data.peerId = null;
     socket.data.roomId = null;
+
+    /**
+     * Registered FIRST, before every other handler on this socket.
+     *
+     * It used to be last, about thirteen hundred lines further down, which
+     * meant a socket was only cleaned up if every registration above it had
+     * succeeded. Nothing up there is likely to throw -- but "unlikely to
+     * throw" is a poor thing to hang the room's correctness on, and the
+     * symptom of getting it wrong is a person who can never leave.
+     */
+    socket.on("disconnect", async (reason) => {
+      try {
+        log.info("client disconnected", { socketId: socket.id, reason });
+        await handleDisconnect(io, socket, { voluntary: false });
+      } catch (err) {
+        log.error("disconnect handler failed", err);
+      }
+    });
 
     socket.on("join-room", async (payload, callback) => {
       try {
@@ -425,6 +469,23 @@ function attachSocketHandlers(io) {
         const name = displayNameFor(role, auth.name);
 
         const room = await getOrCreateRoom(meetingId);
+
+        /**
+         * Name the room from the schedule, once.
+         *
+         * Every join resolves the same class, so this settles on the first one
+         * and is then the same string for everybody -- a student arriving
+         * forty minutes late reads what the teacher has been looking at since
+         * the start. Re-set only if it is still unknown, so a lookup that came
+         * back thin cannot later overwrite a good name with nothing.
+         */
+        if (!room.className) {
+          const named = classLabel(verdict.meeting);
+          if (named) {
+            room.className = named;
+            log.info("room named from the schedule", { roomId: room.id, className: named });
+          }
+        }
 
         if (role === "teacher") {
           const currentTeacher = room.getTeacher();
@@ -1659,14 +1720,6 @@ function attachSocketHandlers(io) {
       }
     });
 
-    socket.on("disconnect", async (reason) => {
-      try {
-        log.info("client disconnected", { socketId: socket.id, reason });
-        await handleDisconnect(io, socket, { voluntary: false });
-      } catch (err) {
-        log.error("disconnect handler failed", err);
-      }
-    });
   });
 }
 
