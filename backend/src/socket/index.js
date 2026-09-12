@@ -1743,7 +1743,24 @@ function attachSocketHandlers(io) {
     socket.on("leave-room", async (_payload, callback) => {
       try {
         await handleDisconnect(io, socket, { voluntary: true });
-        callback?.({ ok: true });
+        // Answered before the connection goes, or the browser never hears.
+        ack(callback, { ok: true });
+        /**
+         * Then close the socket, so pressing Leave and closing the tab are the
+         * same event rather than two paths that merely ought to agree.
+         *
+         * They did not agree. Closing a tab removed the name and pressing Leave
+         * did not, which is the wrong way round -- and the difference is only
+         * that one of them tears the connection down. Keeping a connected
+         * socket with no peer bought nothing: the lobby reconnects on its own
+         * when somebody joins again, and in the meantime that socket is in no
+         * room, holds no peer, and is indistinguishable from a stranger.
+         *
+         * It also puts leaving back within reach of everything that watches
+         * connections -- the orphan sweep cannot help with a peer whose socket
+         * is still alive.
+         */
+        socket.disconnect(true);
       } catch (err) {
         log.error("leave-room failed", err);
         callback?.({ ok: false, error: err.message });
@@ -1834,11 +1851,11 @@ async function handleDisconnect(io, socket, { voluntary }) {
        * is the honest thing to show: they are not gone, they are not here
        * either.
        */
-      socket.to(room.id).emit("teacher-disconnected", {
+      io.to(room.id).emit("teacher-disconnected", {
         peerId: peer.id,
         message: "Teacher lost connection. Meeting continues.",
       });
-      socket.to(room.id).emit("participants", room.participants());
+      io.to(room.id).emit("participants", room.participants());
       await lockStudentMicsIfUnstaffed(io, room);
       return;
     }
@@ -1846,8 +1863,18 @@ async function handleDisconnect(io, socket, { voluntary }) {
     if (wasStaff) await lockStudentMicsIfUnstaffed(io, room);
 
     announceMediaGone(io, room, closed);
-    socket.to(room.id).emit("peer-left", peer.public());
-    socket.to(room.id).emit("participants", room.participants());
+    /**
+     * io.to, not socket.to.
+     *
+     * socket.to means "everyone in the room except me", and who counts as "me"
+     * differs between the two ways of leaving: on a closed tab socket.io has
+     * already taken the socket out of the room, on a Leave it is still in it.
+     * Two paths with different audiences for the same message is a difference
+     * nobody should have to hold in their head, and the person leaving does not
+     * care that they are told they left.
+     */
+    io.to(room.id).emit("peer-left", peer.public());
+    io.to(room.id).emit("participants", room.participants());
     /**
      * Deliberately noisy, and worth the line.
      *

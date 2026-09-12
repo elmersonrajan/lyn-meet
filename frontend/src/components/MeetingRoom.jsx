@@ -93,6 +93,16 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
    */
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  /**
+   * A ref as well as state, because the socket handlers need to read it.
+   *
+   * Leaving now closes the connection server-side, which fires the same
+   * `disconnect` the handlers below treat as "you have been cut off" -- so
+   * without this, pressing Leave flashes a red alarm on the way out. State
+   * would not do: those handlers close over the value from the render they were
+   * registered in.
+   */
+  const leavingRef = useRef(false);
   const [ytOpen, setYtOpen] = useState(false);
   const [ytError, setYtError] = useState("");
   const [endingSession, setEndingSession] = useState(false);
@@ -436,6 +446,8 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
     if (!socket) return undefined;
 
     const onDown = () => {
+      // Our own doing, on the way out. Not a fault to alarm anybody about.
+      if (leavingRef.current) return;
       console.warn("[MeetingRoom] socket lost — this browser is no longer in the meeting");
       setConnectionLost(true);
     };
@@ -445,6 +457,7 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
      * this component existed.
      */
     const onBack = () => {
+      if (leavingRef.current) return;
       console.warn("[MeetingRoom] socket back on a new id — rejoining");
       syncUrlToMeeting(session.meetingId);
       if (!shouldReloadNow()) {
@@ -797,6 +810,9 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
   };
 
   const onLeave = async () => {
+    // Set before the emit: the server closes the socket as part of answering,
+    // so the disconnect can arrive while this is still awaiting.
+    leavingRef.current = true;
     setLeaving(true);
     try {
       await emitAck("leave-room", {});
