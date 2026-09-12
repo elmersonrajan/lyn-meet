@@ -28,6 +28,7 @@ const {
 } = require("./sharedStage");
 const renderQueue = require("../recording/renderQueue");
 const rosterSync = require("./rosterSync");
+const orphanReaper = require("./orphanReaper");
 const enrolment = require("../auth/enrolment");
 
 const log = createLogger("Socket");
@@ -314,6 +315,27 @@ function attachSocketHandlers(io) {
    */
   rosterSync.start(io, rooms);
 
+  /**
+   * And the level below that: the room reconciled against which sockets exist.
+   *
+   * Repeating the roster only helps when the roster is right. A peer whose
+   * socket has gone is the room itself being wrong, and every browser showing
+   * that person is reporting it faithfully.
+   */
+  orphanReaper.start(io, rooms, (room, peer) => {
+    try {
+      attendance.recordLeave(room.id, peer, "connection lost");
+      videoQuality.forget(peer);
+      const closed = producersOf(peer);
+      removePeerFromRoom(room, peer, { force: true });
+      announceMediaGone(io, room, closed);
+      io.to(room.id).emit("peer-left", peer.public());
+      io.to(room.id).emit("participants", room.participants());
+    } catch (err) {
+      log.error("removing an orphaned peer failed", err);
+    }
+  });
+
   onSpeaking((roomId, speakers) => {
     try {
       io.to(roomId).emit("active-speakers", { speakers });
@@ -367,6 +389,24 @@ function attachSocketHandlers(io) {
     log.info("client connected", { socketId: socket.id });
     socket.data.peerId = null;
     socket.data.roomId = null;
+
+    /**
+     * Registered FIRST, before every other handler on this socket.
+     *
+     * It used to be last, about thirteen hundred lines further down, which
+     * meant a socket was only cleaned up if every registration above it had
+     * succeeded. Nothing up there is likely to throw -- but "unlikely to
+     * throw" is a poor thing to hang the room's correctness on, and the
+     * symptom of getting it wrong is a person who can never leave.
+     */
+    socket.on("disconnect", async (reason) => {
+      try {
+        log.info("client disconnected", { socketId: socket.id, reason });
+        await handleDisconnect(io, socket, { voluntary: false });
+      } catch (err) {
+        log.error("disconnect handler failed", err);
+      }
+    });
 
     socket.on("join-room", async (payload, callback) => {
       try {
@@ -1659,14 +1699,6 @@ function attachSocketHandlers(io) {
       }
     });
 
-    socket.on("disconnect", async (reason) => {
-      try {
-        log.info("client disconnected", { socketId: socket.id, reason });
-        await handleDisconnect(io, socket, { voluntary: false });
-      } catch (err) {
-        log.error("disconnect handler failed", err);
-      }
-    });
   });
 }
 
