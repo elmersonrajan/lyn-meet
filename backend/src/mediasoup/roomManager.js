@@ -731,6 +731,32 @@ function getRoom(roomId) {
   return rooms.get(roomId) || null;
 }
 
+/**
+ * The peer a connection owns, found from the connection itself.
+ *
+ * `socket.data.peerId` is how this is normally answered, and it is a mutable
+ * field: joining again overwrites it. A socket that joins a second time -- a
+ * repeated join-room, or a different class without leaving the first -- points
+ * at its newest peer, and the one before it is stranded. Nothing then refers to
+ * that peer at all: its own socket has forgotten it, so the disconnect handler
+ * looks up the new id, removes the new peer and leaves the old one in the room
+ * for the rest of the lesson, in every participant list and on the register.
+ *
+ * A peer's socketId is not mutable in that way -- it is the connection that
+ * made it -- so this can answer the question when the field cannot. Scanning
+ * every room costs a few hundred comparisons on a busy server and only ever
+ * runs when the ordinary lookup has already failed.
+ */
+function findBySocket(socketId) {
+  if (!socketId) return null;
+  for (const room of rooms.values()) {
+    for (const peer of room.peers.values()) {
+      if (peer.socketId === socketId) return { room, peer };
+    }
+  }
+  return null;
+}
+
 function removePeerFromRoom(room, peer, { force = false } = {}) {
   try {
     log.action("removePeer", { roomId: room.id, peerId: peer.id, role: peer.role, force });
@@ -830,6 +856,7 @@ module.exports = {
   rooms,
   getOrCreateRoom,
   getRoom,
+  findBySocket,
   removePeerFromRoom,
   closeRoom,
   onSpeaking,
