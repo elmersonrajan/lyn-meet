@@ -5,6 +5,7 @@ const {
   Peer,
   getOrCreateRoom,
   getRoom,
+  findBySocket,
   removePeerFromRoom,
   closeRoom,
   rooms,
@@ -557,6 +558,35 @@ function attachSocketHandlers(io) {
             joining: socket,
             quality: videoQuality,
             reason: "You joined this class again somewhere else.",
+          });
+        }
+
+        /**
+         * And anything this SOCKET is still holding, wherever it is holding it.
+         *
+         * The check above asks "is this person already in this room". This one
+         * asks "is this connection already somewhere", which is a different
+         * question with a worse answer when it is missed: joining overwrites
+         * socket.data.peerId, so a peer left behind in another room -- or in
+         * this one under a different account -- is referred to by nothing at
+         * all afterwards. Its own socket has forgotten it, so its disconnect
+         * removes the newer peer and leaves the older one in the room for good.
+         *
+         * Rare, and permanent when it happens, which is the combination worth
+         * spending eight lines on.
+         */
+        const stranded = findBySocket(socket.id);
+        if (stranded) {
+          log.warn("this connection was still holding a seat", {
+            socketId: socket.id,
+            heldRoomId: stranded.room.id,
+            heldPeerId: stranded.peer.id,
+            joiningRoomId: room.id,
+          });
+          releaseSeat(io, stranded.room, stranded.peer, {
+            joining: socket,
+            quality: videoQuality,
+            reason: "You joined another class.",
           });
         }
 
@@ -1741,9 +1771,36 @@ async function lockStudentMicsIfUnstaffed(io, room) {
 
 async function handleDisconnect(io, socket, { voluntary }) {
   try {
-    const room = getRoom(socket.data.roomId);
-    const peer = room?.peers.get(socket.data.peerId);
-    if (!room || !peer) return;
+    let room = getRoom(socket.data.roomId);
+    let peer = room?.peers.get(socket.data.peerId);
+
+    /**
+     * The field said nothing, so ask the connection instead.
+     *
+     * `socket.data.peerId` is overwritten by a second join on the same socket,
+     * which strands whatever it pointed at before: nothing refers to that peer
+     * any more, so it stays in the room for the rest of the lesson and no code
+     * path exists that would ever remove it. The peer's own socketId cannot
+     * drift like that -- it is the connection that made it -- so it answers
+     * when the field cannot.
+     *
+     * Warned about, because reaching here at all means the field was wrong and
+     * that is worth knowing rather than quietly working around.
+     */
+    if (!room || !peer) {
+      const found = findBySocket(socket.id);
+      if (!found) return;
+      room = found.room;
+      peer = found.peer;
+      log.warn("socket.data had lost its peer — found it by socket id", {
+        socketId: socket.id,
+        staleRoomId: socket.data.roomId || null,
+        stalePeerId: socket.data.peerId || null,
+        roomId: room.id,
+        peerId: peer.id,
+        name: peer.name,
+      });
+    }
 
     const wasStaff = peer.role === "teacher" || peer.role === "coordinator";
     const force = voluntary || peer.role !== "teacher";
