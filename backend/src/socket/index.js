@@ -7,6 +7,7 @@ const {
   getRoom,
   removePeerFromRoom,
   closeRoom,
+  rooms,
   onSpeaking,
   onPeerRemoved,
   normalizeRole,
@@ -26,6 +27,7 @@ const {
   boardsPublic,
 } = require("./sharedStage");
 const renderQueue = require("../recording/renderQueue");
+const rosterSync = require("./rosterSync");
 const enrolment = require("../auth/enrolment");
 
 const log = createLogger("Socket");
@@ -304,6 +306,14 @@ function attachSocketHandlers(io) {
   // Who is talking, several times a second. Deliberately not logged and not
   // acknowledged: it is a hint for the participant list, and a dropped one is
   // corrected by the next.
+  /**
+   * The floor under every presence message: the roster, repeated.
+   *
+   * Started here rather than in server.js because this is the only place that
+   * holds `io`, and because the thing it is backstopping is the push above it.
+   */
+  rosterSync.start(io, rooms);
+
   onSpeaking((roomId, speakers) => {
     try {
       io.to(roomId).emit("active-speakers", { speakers });
@@ -1728,6 +1738,24 @@ async function handleDisconnect(io, socket, { voluntary }) {
     announceMediaGone(io, room, closed);
     socket.to(room.id).emit("peer-left", peer.public());
     socket.to(room.id).emit("participants", room.participants());
+    /**
+     * Deliberately noisy, and worth the line.
+     *
+     * "Someone left and the list did not change" has three quite different
+     * causes -- the server never got here, it got here and told nobody, or it
+     * told everybody and a browser ignored it -- and they are indistinguishable
+     * from the outside. This says which: if `told` is the number of other
+     * people in the room, the server has done its part and the question moves
+     * to the browser.
+     */
+    log.action("peer-left broadcast", {
+      roomId: room.id,
+      peerId: peer.id,
+      name: peer.name,
+      voluntary,
+      told: Math.max(0, room.peers.size),
+      remaining: [...room.peers.values()].map((p) => p.name),
+    });
     socket.leave(room.id);
     socket.leave(staffRoom(room.id));
     socket.data.peerId = null;
