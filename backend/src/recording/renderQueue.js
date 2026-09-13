@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { createLogger } = require("../utils/logger");
+const logSweep = require("./logSweep");
 const { RECORDINGS_DIR, ensureDir } = require("./paths");
 const { renderJob } = require("./renderJob");
 
@@ -123,6 +124,21 @@ async function drain() {
         dropped: result.dropped,
         error: result.error,
         completedAt: Date.now(),
+      });
+
+      /**
+       * The notes for the class before this one have just been superseded.
+       *
+       * Swept here rather than on a timer because "the last recording" only
+       * changes at this exact moment, and a directory somebody is looking at
+       * should not reorganise itself while they read it.
+       *
+       * A job still waiting to render is never swept -- readJob tells the
+       * sweep which those are, and losing one would lose the class.
+       */
+      logSweep.run(RECORDINGS_DIR, (jobId) => {
+        const other = readJob(jobId);
+        return !other || other.status === STATUS.COMPLETED || other.status === STATUS.FAILED;
       });
     }
   } catch (err) {
