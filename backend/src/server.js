@@ -605,6 +605,11 @@ async function main() {
     // Subscribed BEFORE anything is queued: a render resumed at boot must not
     // be able to finish while nothing is listening for it.
     attendanceDb.start();
+    // A server that died mid-term comes back with a directory full of notes
+    // from classes nobody is investigating any more. Swept once at boot, then
+    // after every render.
+    require("./recording/logSweep").run(RECORDINGS_DIR, () => true);
+
     const publishRecording = require("./recording/publishRecording");
     publishRecording.start();
 
