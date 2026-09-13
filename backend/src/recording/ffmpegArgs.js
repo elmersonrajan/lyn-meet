@@ -1,3 +1,4 @@
+const os = require("os");
 /**
  * Pure builders for the recording SDP and the two ffmpeg command lines.
  *
@@ -36,6 +37,36 @@ const LAYOUT_H = even(Number(process.env.RECORDING_HEIGHT || 720));
  * right answer depends on what the class is: a lecture wants the teacher
  * bigger, a worked example wants the board bigger.
  */
+
+/**
+ * How many cores a render may take.
+ *
+ * ffmpeg with no limit takes all of them, at ordinary priority, on the same
+ * machine that is carrying the live class -- so a render started at the end of
+ * one lesson competes with the SFU running the next one, and the class stutters
+ * for reasons nobody watching it could guess at.
+ *
+ * Half the cores by default, never fewer than one. Half rather than all-but-one
+ * because mediasoup runs a worker per core and they are the ones that must not
+ * be starved: a late video frame in a recording is invisible, a late packet in
+ * a live lesson is somebody's voice breaking up.
+ *
+ * 0 hands the decision back to ffmpeg, which is the right setting on a machine
+ * that renders and nothing else.
+ */
+function encodeThreads() {
+  const raw = Number(process.env.RECORDING_THREADS);
+  if (Number.isFinite(raw) && raw >= 0) return raw;
+  const cores = Math.max(1, os.cpus().length);
+  return Math.max(1, Math.floor(cores / 2));
+}
+
+/** The argument pair, or nothing when ffmpeg is to decide. */
+function threadArgs() {
+  const n = encodeThreads();
+  return n > 0 ? ["-threads", String(n)] : [];
+}
+
 const PIP_FRACTION = Number(process.env.RECORDING_PIP_FRACTION || 4);
 const PIP_W = even(
   Number(process.env.RECORDING_PIP_WIDTH) || LAYOUT_W / (PIP_FRACTION > 0 ? PIP_FRACTION : 4),
@@ -235,6 +266,7 @@ function buildBoardVideoArgs({ pattern, manifest, framesFps = 1, outputPath, wid
     `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
       `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${fps},format=yuv420p`,
     "-c:v", "libx264",
+    ...threadArgs(),
     "-preset", "veryfast",
     "-crf", "28",
     "-an",
@@ -382,6 +414,7 @@ function buildComposeArgs(opts) {
 
   args.push(
     "-c:v", "libx264",
+    ...threadArgs(),
     "-preset", PRESET,
     "-crf", CRF,
     "-pix_fmt", "yuv420p",
@@ -414,6 +447,8 @@ function buildComposeArgs(opts) {
 }
 
 module.exports = {
+  encodeThreads,
+  threadArgs,
   even,
   buildSdp,
   buildIngestArgs,

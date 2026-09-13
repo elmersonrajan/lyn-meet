@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { spawn } = require("child_process");
 const { createLogger } = require("../utils/logger");
 const { RECORDINGS_DIR, fileSize } = require("./paths");
@@ -38,6 +39,24 @@ const MIN_USEFUL_BYTES = 2000;
  * @param {string|null} logPath the human ffmpeg log
  * @param {object|null} events the recording's own account, when there is one
  */
+/**
+ * How far below everything else a render should run.
+ *
+ * The thread cap decides how much of the machine a render may use; this decides
+ * who wins when it wants more than is free. Both matter, and this is the one
+ * that keeps a live class smooth: a niced process is handed the CPU only when
+ * nothing else wants it, so a render soaks up whatever is idle and gets out of
+ * the way the instant a lesson needs it.
+ *
+ * 10 is a substantial step down without being the bottom. Lowering priority
+ * needs no privilege; raising it does, which is why this only ever goes one
+ * way. A machine that renders and nothing else can set 0.
+ */
+function renderNiceness() {
+  const raw = Number(process.env.RECORDING_NICE);
+  return Number.isFinite(raw) ? Math.max(0, Math.min(19, raw)) : 10;
+}
+
 function runFfmpeg(args, label, logPath, events = null) {
   return new Promise((resolve) => {
     const command = `ffmpeg ${args.join(" ")}`;
@@ -45,6 +64,15 @@ function runFfmpeg(args, label, logPath, events = null) {
     log.info(`ffmpeg ${label}`, command);
     events?.note("render-step", { step: label, started: true });
     const proc = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
+    try {
+      // After spawn rather than before: there is no pid to lower until there is
+      // a process. A few milliseconds at normal priority costs nothing.
+      os.setPriority(proc.pid, renderNiceness());
+    } catch (err) {
+      // Not fatal, and not worth failing a render over -- it only means the
+      // encode competes on equal terms, which is where it started.
+      log.warn("could not lower the render's priority", err.message);
+    }
     let errText = "";
     proc.stderr.on("data", (chunk) => {
       errText += String(chunk);
@@ -461,4 +489,4 @@ async function renderJob(job) {
   }
 }
 
-module.exports = { renderJob };
+module.exports = { renderJob, renderNiceness };
