@@ -184,3 +184,81 @@ test("the encode settings are the ones configured", () => {
   assert.strictEqual(args[args.indexOf("-preset") + 1], PRESET);
   assert.strictEqual(args[args.indexOf("-crf") + 1], CRF);
 });
+
+/* ---------- What a render is allowed to take from the machine ---------- */
+
+const os = require("os");
+const { encodeThreads, threadArgs, buildBoardVideoArgs } = require("../src/recording/ffmpegArgs");
+
+test("a render may not take the whole machine", () => {
+  // ffmpeg with no limit takes every core, on the same box carrying the live
+  // class, so a render started at the end of one lesson competes with the SFU
+  // running the next one.
+  const before = process.env.RECORDING_THREADS;
+  try {
+    delete process.env.RECORDING_THREADS;
+    const n = encodeThreads();
+    assert.ok(n >= 1, n);
+    assert.ok(n <= Math.max(1, os.cpus().length), n);
+    assert.ok(n <= Math.max(1, Math.ceil(os.cpus().length / 2)), "half the cores, not all of them");
+  } finally {
+    if (before === undefined) delete process.env.RECORDING_THREADS;
+    else process.env.RECORDING_THREADS = before;
+  }
+});
+
+test("0 hands the decision back to ffmpeg", () => {
+  // The right setting on a machine that renders and nothing else.
+  const before = process.env.RECORDING_THREADS;
+  try {
+    process.env.RECORDING_THREADS = "0";
+    assert.strictEqual(encodeThreads(), 0);
+    assert.deepStrictEqual(threadArgs(), []);
+  } finally {
+    if (before === undefined) delete process.env.RECORDING_THREADS;
+    else process.env.RECORDING_THREADS = before;
+  }
+});
+
+test("the limit reaches both encodes", () => {
+  const before = process.env.RECORDING_THREADS;
+  try {
+    process.env.RECORDING_THREADS = "2";
+    const compose = buildComposeArgs({
+      livePath: "live.mkv",
+      boardVideo: "board.mp4",
+      outputPath: "o.mp4",
+      camIndex: 0,
+      screenIndex: null,
+      hasAudio: true,
+    });
+    assert.strictEqual(compose[compose.indexOf("-threads") + 1], "2");
+    // The board encode is the longer of the two -- one frame per second of
+    // lesson -- so leaving it uncapped would miss most of the cost.
+    const board = buildBoardVideoArgs({ manifest: "board.ffconcat", outputPath: "b.mp4" });
+    assert.strictEqual(board[board.indexOf("-threads") + 1], "2");
+  } finally {
+    if (before === undefined) delete process.env.RECORDING_THREADS;
+    else process.env.RECORDING_THREADS = before;
+  }
+});
+
+test("a render runs below everything else, and can never raise itself", () => {
+  // Lowering priority needs no privilege; raising it does. This only ever goes
+  // one way, whatever is put in the environment.
+  const { renderNiceness } = require("../src/recording/renderJob");
+  const before = process.env.RECORDING_NICE;
+  try {
+    delete process.env.RECORDING_NICE;
+    assert.strictEqual(renderNiceness(), 10);
+    process.env.RECORDING_NICE = "-20";
+    assert.strictEqual(renderNiceness(), 0, "never above normal priority");
+    process.env.RECORDING_NICE = "99";
+    assert.strictEqual(renderNiceness(), 19);
+    process.env.RECORDING_NICE = "0";
+    assert.strictEqual(renderNiceness(), 0);
+  } finally {
+    if (before === undefined) delete process.env.RECORDING_NICE;
+    else process.env.RECORDING_NICE = before;
+  }
+});
