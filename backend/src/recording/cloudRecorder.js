@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 const { createLogger } = require("../utils/logger");
+const recordingLog = require("./recordingLog");
 const { writeBoardFrame, FLAT_VIEW } = require("./whiteboardFrame");
 const boardPage = require("./boardPage");
 const { buildSdp, buildIngestArgs } = require("./ffmpegArgs");
@@ -92,6 +93,8 @@ class CloudRecorder {
     // Every ffmpeg command and its full output, kept beside the recording so a
     // failure can be diagnosed without digging through the server log.
     this.logPath = null;
+    /** The account of this recording, beside the file. See recordingLog.js. */
+    this.events = null;
 
     this.frameDir = null;
     this.frameTimer = null;
@@ -151,6 +154,24 @@ class CloudRecorder {
       this.sdpPath = path.join(RECORDINGS_DIR, `${this.id}.sdp`);
       this.livePath = path.join(RECORDINGS_DIR, `${this.id}_live.mkv`);
       this.logPath = path.join(RECORDINGS_DIR, `${this.id}_ffmpeg.log`);
+      this.events = recordingLog.open(RECORDINGS_DIR, this.id);
+      this.events.note("start", {
+        roomId: this.room.id,
+        className: this.room.className || null,
+        teacher: teacher.name,
+        // What was there to record at the moment the button was pressed. A
+        // recording with no camera is usually this line, not a fault later on.
+        found: {
+          teacherMic: Boolean(audioProducer),
+          teacherCam: Boolean(camProducer),
+          screen: screenProducer ? screenPeer.name : null,
+        },
+        inRoom: [...this.room.peers.values()].map((p) => ({
+          name: p.name,
+          role: p.role,
+          muted: p.audioMuted,
+        })),
+      });
 
       fs.writeFileSync(this.sdpPath, buildSdp({ audio, cam, screen }), "utf8");
 
@@ -308,6 +329,12 @@ class CloudRecorder {
       remoteRtpPort,
       codec: info.codecName,
     });
+    this.events?.note("attach", {
+      source,
+      kind: producer.kind,
+      producerId: producer.id,
+      port: remoteRtpPort,
+    });
     return { ...info, remoteRtpPort };
   }
 
@@ -370,6 +397,17 @@ class CloudRecorder {
     // recording, so the finished file simply had no screen in it and nothing
     // said why.
     this._appendLog(label, args.join(" "));
+    this.events?.note("side-start", {
+      label,
+      kind,
+      screen,
+      peer: peer.name,
+      role: peer.role,
+      port,
+      // How far into the recording this voice begins. A voice that is late by
+      // this much in the finished file is correct, not drifting.
+      offsetMs: Math.max(0, Date.now() - (this.mediaStartedAt || Date.now())),
+    });
     const startedAt = Date.now();
     const proc = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
     let errText = "";
@@ -384,10 +422,23 @@ class CloudRecorder {
       this._appendLog(label, `spawn error: ${err.message}`);
     });
     proc.on("exit", (code, signal) => {
+      const bytes = fileSize(outPath);
       this._appendLog(
         label,
-        `exit: code=${code} signal=${signal} bytes=${fileSize(outPath)}\n${errText}`,
+        `exit: code=${code} signal=${signal} bytes=${bytes}
+${errText}`,
       );
+      this.events?.note("side-stop", {
+        label,
+        bytes,
+        code,
+        signal,
+        heldMs: Date.now() - startedAt,
+        // Zero bytes is almost always somebody who stayed muted rather than a
+        // fault -- but it is the difference between "their voice is missing"
+        // and "they never spoke", and only this can tell you which.
+        silent: bytes === 0 || undefined,
+      });
     });
 
     // A capture that receives nothing is the failure worth knowing about, and
@@ -512,6 +563,7 @@ class CloudRecorder {
     const decline = (why) => {
       log.warn("screen share not captured", { who: peer?.name, why });
       this._appendLog("side:screen", `not captured: ${why}`);
+      this.events?.note("declined", { what: "screen", who: peer?.name || null, why });
       return null;
     };
     try {
@@ -691,6 +743,7 @@ class CloudRecorder {
    */
   _writeBoardSnapshot() {
     try {
+      this.events?.count("boardFrames");
       const at = Date.now();
       const board = this.room.activeBoard ? this.room.activeBoard() : null;
       const view = board?.view || FLAT_VIEW;
@@ -702,7 +755,16 @@ class CloudRecorder {
        * frame or the one after, and a class does not pause for a rasteriser.
        */
       const page = boardPage.pixelsFor(board);
-      if (page.failed && page.key) this.droppedPages.add(page.key);
+      if (page.failed && page.key) {
+        // Once per page, not once per second: this runs at the board frame rate.
+        if (!this.droppedPages.has(page.key)) {
+          this.events?.note("board-page-dropped", {
+            page: page.key,
+            why: "the page under the strokes could not be decoded — poppler missing, or an unreadable file",
+          });
+        }
+        this.droppedPages.add(page.key);
+      }
 
       const signature = this._boardSignature(page.key, Boolean(page.pixels), view);
       if (this.frames.length && signature === this.lastBoardSignature) {
@@ -827,6 +889,10 @@ class CloudRecorder {
       endedAt: this.endedAt,
       livePath: this.livePath,
       logPath: this.logPath,
+      // The same account the capture wrote, carried on into the render so a
+      // recording has ONE story rather than two halves that have to be lined
+      // up by hand.
+      events: this.events,
       sdpPaths: [this.sdpPath],
       frameDir: this.frameDir,
       boardManifest: this._writeBoardManifest(),
@@ -875,7 +941,23 @@ class CloudRecorder {
 
       const bytes = fileSize(this.livePath);
       log.info("capture ended", { recorderId: this.id, bytes, sides: this.sides.length });
+      this.events?.note("capture-ended", {
+        durationMs: this.endedAt - (this.mediaStartedAt || this.endedAt),
+        liveBytes: bytes,
+        // Named rather than counted: "3 sides" does not tell anybody whose
+        // voice is missing from the file.
+        sides: this.sides.map((side) => ({
+          label: side.label,
+          kind: side.kind,
+          screen: Boolean(side.screen),
+          bytes: fileSize(side.path),
+        })),
+      });
 
+      this.events?.finish("queued-for-render", {
+        droppedPages: [...this.droppedPages],
+        frames: this.frames.length,
+      });
       this.job = renderQueue.enqueue(this._buildJob());
       this.status = this.job.status;
       return this.snapshot();

@@ -4,6 +4,7 @@ const { spawn } = require("child_process");
 const { createLogger } = require("../utils/logger");
 const { RECORDINGS_DIR, fileSize } = require("./paths");
 const { resolveOutputPath } = require("./recordingName");
+const recordingLog = require("./recordingLog");
 const { buildBoardVideoArgs, buildAudioMixArgs, buildComposeArgs } = require("./ffmpegArgs");
 const { probeMedia } = require("./probeMedia");
 
@@ -31,10 +32,18 @@ const log = createLogger("RenderJob");
 
 const MIN_USEFUL_BYTES = 2000;
 
-function runFfmpeg(args, label, logPath) {
+/**
+ * @param {string[]} args
+ * @param {string} label
+ * @param {string|null} logPath the human ffmpeg log
+ * @param {object|null} events the recording's own account, when there is one
+ */
+function runFfmpeg(args, label, logPath, events = null) {
   return new Promise((resolve) => {
     const command = `ffmpeg ${args.join(" ")}`;
+    const startedAt = Date.now();
     log.info(`ffmpeg ${label}`, command);
+    events?.note("render-step", { step: label, started: true });
     const proc = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
     let errText = "";
     proc.stderr.on("data", (chunk) => {
@@ -57,6 +66,16 @@ function runFfmpeg(args, label, logPath) {
           log.error("could not write the ffmpeg log", err);
         }
       }
+      events?.note("render-step", {
+        step: label,
+        ok,
+        code,
+        signal,
+        tookMs: Date.now() - startedAt,
+        // The last few lines are where ffmpeg says what it could not do; the
+        // rest is progress noise.
+        why: ok ? undefined : errText.trim().slice(-300) || undefined,
+      });
       resolve({ ok, code, signal, stderr: errText });
     };
 
@@ -76,6 +95,7 @@ async function makeBoardVideo(job) {
     buildBoardVideoArgs({ manifest: job.boardManifest, outputPath: out }),
     "board-video",
     job.logPath,
+    job.events,
   );
   if (!res.ok || fileSize(out) < MIN_USEFUL_BYTES) {
     log.warn("whiteboard video failed — continuing without the board", {
@@ -125,7 +145,7 @@ async function makeMixedAudio(job, hasAudio) {
   });
   if (!args) return { path: null, voices: [], degraded: false };
 
-  const res = await runFfmpeg(args, "audio-mix", job.logPath);
+  const res = await runFfmpeg(args, "audio-mix", job.logPath, job.events);
   if (!res.ok || fileSize(out) < MIN_USEFUL_BYTES) {
     log.error("audio mix failed — the class will have the teacher only", {
       id: job.id,
@@ -359,6 +379,7 @@ async function renderJob(job) {
         }),
         `compose:${attempt.label}`,
         job.logPath,
+        job.events,
       );
 
       const produced = fileSize(outputPath);
@@ -393,6 +414,16 @@ async function renderJob(job) {
           bytes: produced,
           voices: audio.voices.length,
         });
+        job.events?.note("render-done", {
+          file: result.file,
+          // Which layout succeeded matters: "full" means board and camera both
+          // made it, anything else says what was missing and why the file does
+          // not look the way somebody expected.
+          layout: attempt.label,
+          bytes: produced,
+          voices: audio.voices,
+          droppedPages: dropped,
+        });
         return result;
       }
 
@@ -410,6 +441,11 @@ async function renderJob(job) {
     }
 
     log.error("every layout failed — see the ffmpeg log", { id: job.id, logPath: job.logPath });
+    job.events?.note("render-failed", {
+      // The raw capture is kept when this happens, so the class is not lost.
+      why: "every layout was tried and none produced a usable file",
+      logPath: job.logPath,
+    });
     const raw = preserveRawCapture(job);
     return {
       ok: false,
