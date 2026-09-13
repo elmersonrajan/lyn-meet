@@ -17,6 +17,7 @@ const { startWorkers } = require("./mediasoup/workerManager");
 const { attachSocketHandlers } = require("./socket");
 const { startIdleReaper } = require("./rooms/idleReaper");
 const { RECORDINGS_DIR } = require("./recording/cloudRecorder");
+const recordingLog = require("./recording/recordingLog");
 const attendance = require("./attendance/attendanceLog");
 const attendanceDb = require("./attendance/attendanceDb");
 const boardImages = require("./whiteboard/boardImages");
@@ -430,6 +431,38 @@ async function main() {
      * pressed stop and closed the tab can come back later and see whether their
      * class finished building. `?meetingId=` narrows it to one class.
      */
+    /**
+     * Everything that happened during one recording, in order.
+     *
+     * The ffmpeg log beside it says what ffmpeg was asked to do; this says what
+     * the lesson did -- who was captured, who stayed silent, what was shared,
+     * which board pages could not be drawn, and how it ended. Those are the
+     * questions asked when a finished file is not what somebody expected, and
+     * none of them are answerable from ffmpeg output.
+     *
+     * `?format=text` for something readable down the page.
+     */
+    app.get("/api/recordings/:id/log", requireStaff, (req, res) => {
+      try {
+        const id = String(req.params.id || "").replace(/[^A-Za-z0-9_-]/g, "");
+        if (!id) return res.status(400).json({ ok: false, error: "which recording?" });
+        const rows = recordingLog.read(RECORDINGS_DIR, id);
+        if (req.query.format === "text") {
+          res.type("text/plain").send(recordingLog.toText(rows));
+          return;
+        }
+        res.json({ ok: true, id, count: rows.length, events: rows });
+      } catch (err) {
+        // A recording that never started has no log, and that is not an error
+        // worth a 500 -- it is an answer.
+        if (err && err.code === "ENOENT") {
+          return res.status(404).json({ ok: false, error: "no log for that recording" });
+        }
+        log.error("/api/recordings/:id/log failed", err);
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
+
     app.get("/api/recordings/status", requireStaff, (req, res) => {
       try {
         const renderQueue = require("./recording/renderQueue");
