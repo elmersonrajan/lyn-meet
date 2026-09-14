@@ -299,7 +299,14 @@ async function main() {
      * joining a meeting and the ScheduleID is the first part of the name, so
      * it is a small change when it is wanted.
      */
-    app.use("/recordings", requireAuth, express.static(RECORDINGS_DIR));
+    app.use(
+      "/recordings",
+      // A link followed from the platform carries a token and no cookie. This
+      // turns the first into the second; requireAuth still decides who is in.
+      require("./auth/recordingAccess").allowHandoffToken,
+      requireAuth,
+      express.static(RECORDINGS_DIR),
+    );
 
     /**
      * Pictures pasted onto a whiteboard, fetched by every browser in the room.
