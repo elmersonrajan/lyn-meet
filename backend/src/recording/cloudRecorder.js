@@ -918,10 +918,10 @@ ${errText}`,
       endedAt: this.endedAt,
       livePath: this.livePath,
       logPath: this.logPath,
-      // The same account the capture wrote, carried on into the render so a
-      // recording has ONE story rather than two halves that have to be lined
-      // up by hand.
-      events: this.events,
+      // NOT the log object itself: a job is written to .job.json and read back
+      // before it is rendered, so anything with methods arrives as plain data
+      // and calling it throws. The render opens its own handle on the same
+      // file -- appending, so the recording still has one story.
       sdpPaths: [this.sdpPath],
       frameDir: this.frameDir,
       boardManifest: this._writeBoardManifest(),
