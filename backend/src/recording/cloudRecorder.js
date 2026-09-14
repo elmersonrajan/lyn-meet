@@ -95,6 +95,22 @@ class CloudRecorder {
     this.logPath = null;
     /** The account of this recording, beside the file. See recordingLog.js. */
     this.events = null;
+    /**
+     * The next side capture's number.
+     *
+     * Not `sides.length`: a side is pushed to that array at the END of
+     * _startSide, four awaits after its file names are chosen, so two people
+     * unmuting within the same tick both read the same length, write the same
+     * .sdp, and the second ffmpeg binds a port the first already holds. Both
+     * captures are then lost -- one to "Address already in use", the other to
+     * an SDP that was overwritten underneath it.
+     *
+     * A counter incremented synchronously cannot collide, because nothing can
+     * run between reading it and increasing it.
+     */
+    this.sideSeq = 0;
+    /** Peers with a capture being started right now, for the same reason. */
+    this.startingSides = new Set();
 
     this.frameDir = null;
     this.frameTimer = null;
@@ -367,7 +383,7 @@ class CloudRecorder {
    *   mistaken for their voice when deciding what is already being captured.
    */
   async _startSide({ producer, peer, kind, screen = false }) {
-    const index = this.sides.length;
+    const index = this.sideSeq++;
     const port = pickPort();
     const transport = await this.room.router.createPlainTransport({
       listenInfo: { protocol: "udp", ip: "127.0.0.1" },
@@ -507,16 +523,29 @@ ${errText}`,
       if (this.sides.some((s) => s.kind === "audio" && s.peerId === peer.id && !s.screen)) {
         return null;
       }
-      if (this.sides.length >= MAX_SIDES) {
+      /**
+       * `sides` only learns about a capture once it has finished starting, so
+       * the check above cannot see one that is still on its way. Unmuting
+       * twice quickly, or a resume racing the seeding loop, would otherwise
+       * give one person two captures of the same voice.
+       */
+      const claim = `audio:${peer.id}`;
+      if (this.startingSides.has(claim)) return null;
+      if (this.sides.length + this.startingSides.size >= MAX_SIDES) {
         log.warn("voice not recorded — too many side captures already", {
           name: peer.name,
           max: MAX_SIDES,
         });
         return null;
       }
-      const producer = this.room.findProducer(peer.id, "audio");
-      if (!producer) return null;
-      return await this._startSide({ producer, peer, kind: "audio" });
+      this.startingSides.add(claim);
+      try {
+        const producerA = this.room.findProducer(peer.id, "audio");
+        if (!producerA) return null;
+        return await this._startSide({ producer: producerA, peer, kind: "audio" });
+      } finally {
+        this.startingSides.delete(claim);
+      }
     } catch (err) {
       log.error("addVoice failed — recording continues without that voice", err);
       return null;
@@ -889,10 +918,10 @@ ${errText}`,
       endedAt: this.endedAt,
       livePath: this.livePath,
       logPath: this.logPath,
-      // The same account the capture wrote, carried on into the render so a
-      // recording has ONE story rather than two halves that have to be lined
-      // up by hand.
-      events: this.events,
+      // NOT the log object itself: a job is written to .job.json and read back
+      // before it is rendered, so anything with methods arrives as plain data
+      // and calling it throws. The render opens its own handle on the same
+      // file -- appending, so the recording still has one story.
       sdpPaths: [this.sdpPath],
       frameDir: this.frameDir,
       boardManifest: this._writeBoardManifest(),
