@@ -271,6 +271,18 @@ function cleanupIntermediates(job, extras) {
  */
 async function renderJob(job) {
   const dropped = [];
+  /**
+   * Reopened here rather than carried on the job.
+   *
+   * The job crosses a JSON file on its way to this function, so anything with
+   * methods on it arrives as plain data -- which is exactly how every render
+   * since the log was added failed at its first step, with `events?.note is
+   * not a function`, while the captures piled up unrendered.
+   *
+   * Appending to the same file, so the capture's account and the render's are
+   * one story.
+   */
+  job.events = recordingLog.open(RECORDINGS_DIR, job.id, job.startedAt || Date.now());
   try {
     /**
      * The RTP capture holds the microphone, the camera and a shared screen --

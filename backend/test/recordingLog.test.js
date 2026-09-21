@@ -89,3 +89,25 @@ test("the text view puts the position first", () => {
   assert.ok(text.includes("+240.0s"), text);
   assert.ok(text.includes("side-stop"), text);
 });
+
+test("a log handle does not survive being written to a job file", () => {
+  // This is the bug that stopped every render for a day. The render job is
+  // written to <id>.job.json and read back before rendering, so anything with
+  // methods on it arrives as plain data -- and `events?.note(...)` threw at the
+  // first step while captures piled up unrendered.
+  //
+  // The render must therefore open its own handle, never carry one.
+  const dir = tmp();
+  const live = new recordingLog.RecordingLog(path.join(dir, "j_events.jsonl"));
+  const throughJson = JSON.parse(JSON.stringify({ id: "j", events: live }));
+
+  assert.strictEqual(typeof live.note, "function");
+  assert.notStrictEqual(typeof throughJson.events?.note, "function", "methods cannot cross JSON");
+
+  // And reopening appends to the same file rather than starting a new one.
+  live.note("capture-ended", {});
+  const reopened = recordingLog.open(dir, "j");
+  reopened.note("render-step", { step: "compose" });
+  const rows = recordingLog.read(dir, "j");
+  assert.deepStrictEqual(rows.map((r) => r.event), ["capture-ended", "render-step"]);
+});
