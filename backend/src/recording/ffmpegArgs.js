@@ -160,8 +160,24 @@ function buildAudioMixArgs({ livePath, hasAudio, voices = [], outputPath }) {
   voices.forEach((voice, i) => {
     args.push("-i", voice.path);
     const ms = Math.max(0, Math.round(voice.offsetMs || 0));
-    const delay = ms > 0 ? `adelay=${ms}:all=1,` : "";
-    chains.push(`[${input}:a]${delay}aresample=async=1[a_v${i}]`);
+    const delay = ms > 0 ? `,adelay=${ms}:all=1` : "";
+    /**
+     * Pinned to zero BEFORE it is delayed, which is the order that matters.
+     *
+     * The teacher's stream gets first_pts=0 and starts where the file starts.
+     * A voice was delayed first and resampled after, so the offset was added
+     * to whatever timestamp its own capture happened to begin at -- and a side
+     * capture is written from live RTP and killed at the end of the class, so
+     * its header is not something to trust. Delaying an unknown start by a
+     * known amount gives an unknown position, which is how every voice ended
+     * up piled at the beginning of the file while the teacher sat correctly on
+     * the timeline.
+     *
+     * Normalise, then place. first_pts=0 after the delay would be worse than
+     * useless: it would pin the silence adelay had just inserted back to zero
+     * and throw the offset away again.
+     */
+    chains.push(`[${input}:a]aresample=async=1:first_pts=0${delay}[a_v${i}]`);
     labels.push(`a_v${i}`);
     input += 1;
   });
