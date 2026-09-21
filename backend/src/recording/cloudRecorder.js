@@ -516,12 +516,26 @@ ${errText}`,
    * between, which is cheaper and safer than tearing it down and rebuilding it.
    */
   async addVoice(peer) {
+    /**
+     * Every answer is written down, not just the yes.
+     *
+     * side-start is only reached when a capture actually begins, so a voice
+     * that was never captured left no trace anywhere -- and "why is this person
+     * not in the recording" is the question the log exists to answer. Five
+     * different rules can end this, and from the outside they are
+     * indistinguishable from each other and from a bug.
+     */
+    const no = (why) => {
+      this.events?.note("voice-skipped", { peer: peer?.name || null, why });
+      return null;
+    };
     try {
-      if (!this.active || !peer || peer.disconnected) return null;
+      if (!this.active) return no("the recording is not running");
+      if (!peer || peer.disconnected) return no("they had already left");
       const teacher = this.room.getTeacher();
-      if (teacher && peer.id === teacher.id) return null;
+      if (teacher && peer.id === teacher.id) return null; // in the main capture
       if (this.sides.some((s) => s.kind === "audio" && s.peerId === peer.id && !s.screen)) {
-        return null;
+        return no("already being captured");
       }
       /**
        * `sides` only learns about a capture once it has finished starting, so
@@ -530,18 +544,18 @@ ${errText}`,
        * give one person two captures of the same voice.
        */
       const claim = `audio:${peer.id}`;
-      if (this.startingSides.has(claim)) return null;
+      if (this.startingSides.has(claim)) return no("a capture was already starting");
       if (this.sides.length + this.startingSides.size >= MAX_SIDES) {
         log.warn("voice not recorded — too many side captures already", {
           name: peer.name,
           max: MAX_SIDES,
         });
-        return null;
+        return no(`at the limit of ${MAX_SIDES} side captures`);
       }
       this.startingSides.add(claim);
       try {
         const producerA = this.room.findProducer(peer.id, "audio");
-        if (!producerA) return null;
+        if (!producerA) return no("they have no microphone producer");
         return await this._startSide({ producer: producerA, peer, kind: "audio" });
       } finally {
         this.startingSides.delete(claim);
