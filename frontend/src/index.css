@@ -2652,3 +2652,56 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .conn-lost button:hover {
   background: #ffe9e7;
 }
+
+/* No microphone or camera, said until it is fixed.
+   Amber rather than red: this is something the person can put right in two
+   clicks, unlike a lost connection, and it should not read as a disaster. */
+.media-blocked {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  background: #8a5300;
+  color: #fff;
+  padding: 9px 14px;
+  font-size: 13px;
+  z-index: 61;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+
+.mb-text {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.mb-text strong {
+  font-weight: 700;
+}
+
+.mb-text span {
+  opacity: 0.92;
+}
+
+.media-blocked button {
+  background: #fff;
+  color: #8a5300;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.media-blocked button:hover {
+  background: #fff3e0;
+}

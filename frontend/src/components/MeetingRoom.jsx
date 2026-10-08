@@ -1091,6 +1091,21 @@ export default function MeetingRoom({ socket, joinPayload, onLeft }) {
         }
         onError={showToast}
       />
+      {/*
+        Above the connection bar, because a person with no microphone is in the
+        class and can fix it; a person with no connection is not and cannot.
+      */}
+      {media.mediaError ? (
+        <div className="media-blocked" role="alert">
+          <div className="mb-text">
+            <strong>{media.mediaError.title}</strong>
+            <span>{media.mediaError.message}</span>
+          </div>
+          {media.mediaError.canRetry ? (
+            <button onClick={() => media.retryLocalMedia()}>Try again</button>
+          ) : null}
+        </div>
+      ) : null}
       {connectionLost ? (
         <div className="conn-lost" role="alert">
           <span>Connection lost — you are no longer in the meeting.</span>
