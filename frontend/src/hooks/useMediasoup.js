@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as mediasoupClient from "mediasoup-client";
 import { emitAck } from "../services/socket";
+import { classifyMediaError, watchPermissions } from "../services/mediaPermission.js";
 
 /**
  * What to capture and how much to spend sending it, when the server has not
@@ -152,6 +153,14 @@ export function useMediasoup({ socket, role, peerId, enabled, profile }) {
 
   const [localStream, setLocalStream] = useState(null);
   const [teacherStream, setTeacherStream] = useState(null);
+  /**
+   * Why this person has no camera or microphone, or null when they do.
+   *
+   * Held rather than thrown: the failure used to surface as a toast that was
+   * gone in four seconds, leaving somebody sitting in a class with no voice and
+   * nothing on screen explaining it. This stays until the device works.
+   */
+  const [mediaError, setMediaError] = useState(null);
   const [screenStream, setScreenStream] = useState(null);
   const [remoteAudio, setRemoteAudio] = useState([]);
   // Only the teacher joins live; everyone else arrives muted.
@@ -350,6 +359,8 @@ export function useMediasoup({ socket, role, peerId, enabled, profile }) {
         console.log("[Mediasoup] audio producer created", { role, muted: role !== "teacher" });
       }
 
+      setMediaError(null);
+
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack && role === "teacher" && sendTransportRef.current) {
         // A face rather than a spreadsheet: the encoder is told so, and will
@@ -370,9 +381,42 @@ export function useMediasoup({ socket, role, peerId, enabled, profile }) {
       }
     } catch (err) {
       console.error("[Mediasoup] startLocalMedia failed", err);
+      setMediaError(classifyMediaError(err, { wantCamera: role === "teacher" }));
       throw err;
     }
   }, [role, applyLocalStream, releaseStream]);
+
+  /**
+   * Ask again.
+   *
+   * Worth knowing what this can and cannot do. A browser that was told "Block"
+   * will not show a prompt however many times it is called -- it rejects
+   * straight away. But a prompt that was DISMISSED, by clicking away or hitting
+   * escape, is not a refusal, and asking again brings it back. That is a large
+   * share of the cases and the only reason this button exists.
+   */
+  const retryLocalMedia = useCallback(async () => {
+    try {
+      await startLocalMedia();
+      return true;
+    } catch {
+      // startLocalMedia has already recorded why; the banner is still up.
+      return false;
+    }
+  }, [startLocalMedia]);
+
+  /**
+   * And the half nobody has to press: if somebody allows the microphone in
+   * site settings, the class starts on its own rather than when they think to
+   * reload.
+   */
+  useEffect(() => {
+    if (!mediaError || mediaError.kind !== "denied") return undefined;
+    return watchPermissions(["microphone", "camera"], () => {
+      console.log("[Mediasoup] permission granted — starting media");
+      retryLocalMedia();
+    });
+  }, [mediaError, retryLocalMedia]);
 
   const initDevice = useCallback(
     async ({ routerRtpCapabilities, iceServers }) => {
@@ -797,6 +841,8 @@ export function useMediasoup({ socket, role, peerId, enabled, profile }) {
     teacherStream,
     screenStream,
     remoteAudio,
+    mediaError,
+    retryLocalMedia,
     micOn,
     camOn,
     sharing,
